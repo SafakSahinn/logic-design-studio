@@ -2322,7 +2322,7 @@ ${wireXmls.join('\n')}
       } else {
         // 2. Otherwise compute the 1 or 2 orthogonal segments from Logisim's direction-locked L-bend
         const dir = computeLogisimWireDirection(startPt, endPt, wiringFrom.direction || DIR_NONE);
-        const segs = getLogisimWiringToolSegments(startPt, endPt, dir);
+        const segs = getLogisimWiringToolSegments(startPt, endPt, dir, components);
         if (segs.length === 0) return prev;
 
         const addedWires: CircuitWire[] = segs.map((seg, idx) => ({
@@ -8522,7 +8522,7 @@ ${wireXmls.join('\n')}
               if (p0.x === p1.x && p0.y === p1.y) return null;
 
               const dir = computeLogisimWireDirection(p0, p1, wiringFrom.direction || DIR_NONE);
-              const segs = getLogisimWiringToolSegments(p0, p1, dir);
+              const segs = getLogisimWiringToolSegments(p0, p1, dir, components);
               if (segs.length === 0) return null;
 
               let previewPath = `M ${segs[0].e0.x},${segs[0].e0.y}`;

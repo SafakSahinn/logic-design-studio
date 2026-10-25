@@ -1,115 +1,124 @@
-# LogicDesign Studio — Dijital Mantık Devre Tasarımı & CAD Simülasyon Platformu
+<div align="center">
 
-Modern, yüksek performanslı ve tarayıcı/masaüstü tabanlı **Dijital Mantık Devre CAD (Computer-Aided Design), Şematik Tasarım ve Canlı Simülasyon Platformu**.
+# 🖥️ LogicDesign Studio — Desktop Edition
+### **Dijital Mantık Devre Tasarımı, EDA Şematik Çizim & Gerçek Zamanlı Donanım Simülasyon Masaüstü Uygulaması**
 
-LogicDesign Studio; temel mantık kapılarından 16-bit işlemci mimarilerine, ses synthesizer'larından renkli video grafik birimlerine kadar her seviyedeki dijital elektronik sistemin tasarlanmasını, test edilmesini ve endüstri standardı formatlara aktarılmasını sağlar.
+[![Electron](https://img.shields.io/badge/Electron-45.0-47848F?style=for-the-badge&logo=electron&logoColor=white)](https://www.electronjs.org/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Platform](https://img.shields.io/badge/Platform-Windows_x64_Portable-0078D6?style=for-the-badge&logo=windows&logoColor=white)](#)
+[![Logisim Compatible](https://img.shields.io/badge/Logisim-.circ_XML_Uyumlu-10B981?style=for-the-badge)](#)
 
----
-
-## 🚀 Öne Çıkan Temel Özellikler
-
-### 1. Profesyonel CAD Çizim Tuvali & Manhattan Kablolama
-* **Akıllı Manhattan Yönlendirme:** Çapraz geçişleri önleyen, 90 derecelik dik açılı profesyonel EDA kablo çizimi.
-* **Dirsek & Orta Segment Sürükleme:** Çizilmiş kabloların köşe dirsek noktaları veya orta segmentleri fareyle tutularak tuval üzerinde serbestçe genişletilebilir, taşınabilir veya çift tıklamayla başlangıç konumuna sıfırlanabilir.
-* **Akıcı Gezinme (Pan & Zoom):** Farenin sağ tuşuyla tuvali dilediğiniz gibi kaydırabilir (`Right-click Drag`), `Space + Sol Tık` veya araç çubuğundaki **Kaydırma Aracı (Hand Tool)** ile gezinip, fare tekerleğiyle hassas yakınlaştırma (`Zoom %40 - %250`) yapabilirsiniz.
-* **Toplu Seçim & Düzenleme:** Çerçeve seçim kutusu (`Selection Box`), çoklu taşıma, 90° döndürme (`R`), çoğaltma (`Ctrl+D`) ve silme (`Delete / Backspace`).
-
-### 2. Kapsamlı Bileşen Kütüphanesi
-* **Mantık Kapıları:** AND, OR, NOT, NAND, NOR, XOR, XNOR, Üç Durumlu Tampon (Tri-State Buffer).
-* **Giriş / Çıkış Birimleri:** Mekanik Anahtarlar (Switch), Anlık Bas-Bırak Butonlar (Pushbutton), 4'lü DIP Switch, Frekans Ayarlı Saat Jeneratörleri (0.5 Hz - 8 Hz), Mantık Probları, LED'ler, 4'lü LED Barları, 7-Segment ve Hex Sayısal Göstergeler.
-* **Aritmetik & Mantık Blokları:** Yarım Toplayıcı, Tam Toplayıcı, Tam Çıkarıcı, 2:1 & 8:1 Çoklayıcılar (MUX), 1:2 Demultiplexer, 2:4 & 3:8 Kod Çözücüler, Öncelikli Kodlayıcı, 4-Bit Sayısal Karşılaştırıcı ve **74HC181 4-Bit ALU**.
-* **Ardışıl Devre Elemanları (Sequential Logic):** D Flip-Flop, J-K Flip-Flop, T Flip-Flop, SR Latch, 4-Bit Senkron Sayaç, 4-Bit Kaydırma Yazmacı (Shift Register), 16x4 RAM ve 16x4 ROM bellekler.
-
-### 3. Multimedya & Gelişmiş Donanım Modülleri
-* **8-Bit Chiptune Piezo Buzzer:** Uluslararası A440 akortlu 16 notalık tam skala (Do-Re-Mi / Hz). Tekil (singleton) Web Audio motoru, saatin yükselen kenarında tetiklenen 6ms keskin vuruş (attack) ve %82 sequencer gate release içeren otantik NES / Game Boy pulse wave zarfı.
-* **16x16 RGB VRAM Renkli Video Ekranı:** 256 bağımsız renkli pikselli video göstergesi. 4-bit X ve Y koordinat veri yolları, Yazma İzni (WE) pimi, CLK darbesi ve interaktif fare tıklamasıyla tuvalde doğrudan piksel boyama desteği.
-* **8x8 LED Grafik Matrisi (GPU):** Satır ve sütun mantık sinyalleriyle piksel animasyonları ve grafik gösterimi.
-* **7-Bit ASCII Klavye Matrisi Terminali:** Tuvaldeki tuşlara basıldığında gerçek ASCII ikili kodunu üreten ve Veri Hazır Strobe (ST) sinyali veren mikrobilgisayar giriş terminali.
-
-### 4. İleri Düzey Mühendislik & Analiz Araçları
-* **Çok Kanallı Zamanlama Osiloskobu (Timing Scope):** Devredeki saat, veri yolları ve giriş/çıkış sinyallerini canlı mantık dalga formları (0 ve 1) halinde çizer; **VCD (Value Change Dump)** formatında dışa aktarım sağlar.
-* **Doğruluk Tablosu & Karnaugh Haritası (K-Map):** Seçili çıkışların doğruluk tablosunu otomatik üretir, K-Map minimizasyonunu (SOP) hesaplar.
-* **Otomatik Devre Sentezleyici:** Herhangi bir Boole cebri ifadesini (örneğin `(A & B) | ~C`) saniyeler içinde tuvalde kapı şeması olarak otomatik çizer.
-* **Sonlu Durum Makinesi (FSM) Tasarımcısı:** Durumlar (States) ve Geçişler (Transitions) tanımlanarak tek tıkla durum tablosunu ve flip-flop/kapı sentezini gerçekleştirir.
-* **İnteraktif Hex Bellek Editörü:** RAM ve ROM bellek hücrelerini canlı hex/bin olarak düzenler; Super Mario, Star Wars ve Tetris hazır melodilerini tek tıkla yükler.
-* **Otomatik Testbench Doğrulayıcı:** Test vektörleriyle devrenin doğruluk tablosunu otomatik test eder ve raporlar.
-* **Endüstri Standardı CAD (.circ) Dışa & İçe Aktarımı:** Tasarımları standart `.circ` XML formatında Logisim/Logisim-Evolution ile çift yönlü paylaşır.
-* **FPGA Verilog & VHDL Kod Üreticisi:** Şematik tasarımları tek tıkla FPGA sentezine hazır RTL donanım tanımlama koduna dönüştürür.
-* **Hiyerarşik Alt Devre Paketleme (Subcircuits / ICs):** Tuvaldeki herhangi bir devreyi entegre (IC) bloğu haline getirip kendi giriş/çıkış bacaklarıyla paketler; çift tıklamayla içine girilip incelenebilir.
+<p align="center">
+  <b>Kurulum gerektirmeyen taşınabilir (Portable `.exe`) masaüstü CAD ortamında temel mantık kapılarından 4-Bit SAP-1 mikroişlemci mimarilerine, 8-Bit Chiptune ses synthesizer'larından 16x16 RGB VRAM GPU ekranlarına kadar her seviyedeki sayısal sistemi tasarlayın ve simüle edin.</b>
+</p>
 
 ---
 
-## 🎛️ Hazır Devre Kitleri (Presets)
+[🖥️ **Masaüstü Uygulaması (logic-design-studio)**](https://github.com/SafakSahinn/logic-design-studio) • [🌐 **Web Platformu (logic-design-web)**](https://github.com/SafakSahinn/logic-design-web)
 
-Studio içerisinde tek tıkla yüklenebilen ve canlı çalışan hazır mühendislik kitleri:
-
-1. **Yarım ve Tam Toplayıcı Devresi:** Mantık kapılarıyla 1-bit toplama ve elde (Cout) transferi.
-2. **4-Bit Aritmetik Mantık Birimi (ALU - 74HC181):** Aritmetik toplama/çıkarma ve mantıksal AND/OR/XOR işlemlerini fonksiyon seçici pinlerle yürüten işlemci çekirdeği.
-3. **4-Bit İşlemci Veri Yolu (CPU Datapath):** Program Sayacı (PC), 16x4 Program ROM'u, Komut Kaydı (IR) ve ALU birimini içeren mikrobilgisayar mimarisi.
-4. **8-Bit Chiptune Müzik Kutusu:** CLK saat darbesi, 4-bit senkron sayaç, Super Mario melodisi yüklü 16x4 ROM ve piezo buzzer içeren ses işlemcisi.
-5. **8-Bit Retro Ses Synthesizer & Müzik İstasyonu:** Star Wars ana fanfar melodisi, 7-Segment nota göstergesi ve durum LED'leri içeren synthesizer kiti.
-6. **16x16 RGB VRAM Renkli Video Ekranı:** X-Y sayaçları, renk seçiciler ve yazma izniyle 256 piksellik renkli GPU çizim devresi.
-7. **ASCII Klavye Terminal Kiti:** Klavye tuş takımı, 7-bit ASCII veri yolu, LED barları ve IRQ strobe sinyali içeren terminal birimi.
-8. **8x8 LED Grafik Matrisi (GPU):** Piksel sanatı ve animasyon üreten LED matris devresi.
+</div>
 
 ---
 
-## 💻 Kurulum ve Çalıştırma
+## ✨ Masaüstü Sürümü Öne Çıkan Özellikler
 
-### Gereksinimler
-* **Node.js** (v18 veya üzeri önerilir)
-* **npm** veya modern paket yöneticisi
+- **🚀 Kurulumsuz Taşınabilir (`Portable .exe`) Çalışma:** Tek tıkla doğrudan çalışan `LogicDesign Studio-Portable.exe` paketi ile çevrimdışı (offline) yüksek performanslı CAD deneyimi.
+- **📐 Logisim Standardında 10px Ortogonal Kablolama Motoru (`WireRepair`):**
+  - İlk hareket yönüne duyarlı (`Yatay-İlk` / `Dikey-İlk`) 90° dik açılı L-büküm kablo çizimi.
+  - Mevcut bir kablonun herhangi bir noktasından doğrudan dal (branch) çekme, kablo uçlarını sürükleyerek uzatma/kısaltma.
+  - Kapıların ikinci girişine (`B`) kablo çekerken komşu giriş pini (`A`) üzerinden geçip kısa devre oluşturmayı önleyen akıllı pin çevresi dolanımı.
+  - Yalnızca $\ge 3$ kablo segmentinin birleştiği gerçek kavşaklarda lehim noktası (solder dot) oluşturan Logisim `CircuitWires` mimarisi.
+- **🔌 36+ Donanım Bileşeni & 74HC/74LS Entegre Kütüphanesi:** Mantık kapıları, Flip-Flop'lar, 74HC181 4-Bit ALU, 74HC85 Karşılaştırıcı, 74HC194 Shift Register, 74HC189 16x4 RAM, 16x4 ROM, 8-Bit Chiptune Buzzer, 8x8 LED Matris ve 16x16 RGB VRAM Ekran.
+- **🧠 Otomatik Sentez & Analiz Araçları:** Doğruluk Tablosu, Quine-McCluskey & Karnaugh Haritası (K-Map) çözücü, Boole cebri ifadesinden otomatik devre çizimi, FSM sentezleyici, çok kanallı lojik osiloskop (`.vcd` çıktılı), `.circ` Logisim XML içe/dışa aktarımı ve FPGA Verilog/VHDL üreticisi.
 
-### Web Uygulaması Olarak Çalıştırma
+---
+
+## 🧩 Sistem Mimarisi
+
+```mermaid
+flowchart LR
+    subgraph Desktop["🖥️ Electron Masaüstü Çekirdeği"]
+        Canvas["10px Grid SVG CAD Tuvali"]
+        Wiring["Logisim Ortogonal Kablolama Motoru"]
+        Scope["Canlı Lojik Analizör & VCD"]
+    end
+
+    subgraph Engine["⚙️ Simülasyon & Sentez Motoru"]
+        NetSolver["Union-Find Elektrik Ağı Çözücü"]
+        QMC["Quine-McCluskey & K-Map Çözücü"]
+        BoolSynth["Boole AST -> Kapı Sentezleyici"]
+        FSMSynth["Mealy / Moore FSM Sentezleyici"]
+    end
+
+    subgraph Export["📦 Dışa Aktarım & Donanım"]
+        Circ[".circ (Logisim XML) İçe/Dışa Aktarım"]
+        HDL["Verilog & VHDL RTL Üretici"]
+        SubIC["Hiyerarşik Alt Devre (IC) Paketleme"]
+    end
+
+    Canvas <--> Wiring
+    Wiring <--> NetSolver
+    NetSolver --> Scope
+    QMC --> BoolSynth
+    FSMSynth --> Canvas
+    BoolSynth --> Canvas
+    NetSolver --> Circ
+    NetSolver --> HDL
+    Canvas <--> SubIC
+```
+
+---
+
+## 🔌 Donanım Bileşen Katalogu
+
+| Kategori | Bileşenler |
+| :--- | :--- |
+| **🟢 Giriş Birimleri** | Anahtar (`Switch`), Anlık Buton (`Pushbutton`), 4-Bit DIP Anahtar (`DIP Switch`), Saat Üreteci (`Clock 0.5Hz–8Hz`), `VCC (1)`, `GND (0)`, 7-Bit `ASCII Klavye Terminali` |
+| **🔵 Mantık Kapıları** | `AND`, `OR`, `NOT`, `NAND`, `NOR`, `XOR`, `XNOR` (2–5 girişli yapılandırılabilir), 3 Durumlu Tampon (`Tri-State Buffer`), Kablosuz `Tünel (Tunnel)` |
+| **🟣 Kombinasyonel Entegreler** | Yarım/Tam Toplayıcı (`Half/Full Adder`), Yarım/Tam Çıkarıcı (`Half/Full Subtractor`), `2:1 / 4:1 / 8:1 MUX (74HC151)`, `1:2 / 1:4 DEMUX`, `2:4 / 3:8 Decoder (74HC138)`, `BCD to 7-Seg (74LS47)`, `4:2 Priority Encoder (74HC148)`, `4-Bit Karşılaştırıcı (74HC85)`, `4-Bit ALU (74HC181)`, `4-Bit Veri Yolu Ayırıcı (Splitter)` |
+| **🟠 Ardışıl Devre & Bellekler** | `D Flip-Flop`, `JK Flip-Flop`, `T Flip-Flop`, `SR Latch`, `4-Bit Senkron Sayaç (74HC161)`, `4-Bit Paralel Yazmaç (Register)`, `4-Bit Evrensel Kaydırmalı Yazmaç (74HC194)`, `16x4 RAM (74HC189)`, `16x4 ROM` |
+| **🔴 Çıkış & Multimedya** | `5mm LED`, `Mantık Probu`, `4-Bit LED Bar`, `7-Segment Ekran`, `4-Bit Hex Gösterge (0-F)`, `8-Bit Chiptune Piezo Buzzer`, `8x8 LED Nokta Matris (GPU)`, `16x16 RGB VRAM Video Ekranı` |
+
+---
+
+## 💻 Kurulum, Geliştirme ve Derleme
+
+### Doğrudan Çalıştırma (Windows)
+Depo kök dizinindeki **`LogicDesign Studio-Portable.exe`** dosyasını çift tıklayarak kurulum yapmadan doğrudan çalıştırabilirsiniz.
+
+### Kaynak Koddan Derleme
 ```bash
-# Bağımlılıkları yükleyin
+# 1. Bağımlılıkları yükleyin
 npm install
 
-# Geliştirme sunucusunu başlatın
+# 2. Geliştirme modunda başlatın (Vite + Electron)
 npm run dev
-
-# Üretim derlemesi (Production Build)
-npm run build
-```
-
----
-
-## 🖥️ Masaüstü Uygulaması (Desktop App)
-
-LogicDesign Studio, **Electron** altyapısıyla bağımsız bir masaüstü uygulaması (Windows, macOS, Linux) olarak çalıştırılabilir.
-
-### Masaüstü Geliştirme Modunda Çalıştırma:
-```bash
-# 1. Terminalde dev sunucusunu başlatın:
-npm run dev
-
-# 2. İkinci terminalde Electron masaüstü uygulamasını açın:
 npm run electron:dev
-```
 
-### Masaüstü Kurulum Paketini (EXE / Installer) Oluşturma:
-```bash
-npm run electron:build
+# 3. Taşınabilir Windows .exe (Portable) paketi oluşturun
+npm run build
+npx electron-builder --win portable
 ```
 
 ---
 
-## ⌨️ Temel Klavye Kısayolları
+## ⌨️ Klavye ve Fare Kısayolları
 
 | Kısayol | İşlev |
 | :--- | :--- |
-| **Fare Sağ Tuş Sürükle** | Tuvali akıcı kaydırma (Canvas Pan) |
-| **Space + Sol Tuş Sürükle** | Tuvali kaydırma (Alternatif el aracı) |
-| **Fare Tekerleği** | Yakınlaştırma / Uzaklaştırma (Zoom In / Out) |
-| **Ctrl + Z / Ctrl + Y** | Geri Al (Undo) / İleri Al (Redo) |
-| **Ctrl + C / Ctrl + V** | Seçili bileşenleri kopyala ve yapıştır |
-| **Ctrl + D** | Seçili bileşenleri çoğalt (Duplicate) |
-| **R** | Seçili bileşenleri saat yönünde 90° döndür |
-| **Delete / Backspace** | Seçili bileşen veya kabloları sil |
-| **F2** | Seçili bileşeni yeniden adlandır |
-| **Shift + Tıklama** | Çoklu seçim moduna bileşen ekle/çıkar |
+| **Sol Tık (Pin / Kablo Üzeri) + Sürükle** | Pin'den veya mevcut bir kablonun herhangi bir noktasından 90° ortogonal kablo çekme |
+| **Kablo Ucu Sürükle** | Mevcut kablo segmentini uzatma, kısaltma veya yeni köşe ekleme |
+| **Sağ Tık Sürükle** / **Space + Sol Tık** | Tuvali serbest kaydırma (`Canvas Pan`) |
+| **Fare Tekerleği (Scroll)** | Yakınlaştırma / Uzaklaştırma (`Zoom %40 – %250`) |
+| **`Ctrl + Z` / `Ctrl + Y`** | Geri Al (`Undo`) / İleri Al (`Redo`) |
+| **`Ctrl + C` / `Ctrl + V` / `Ctrl + D`** | Seçili bileşenleri Kopyala / Yapıştır / Çoğalt |
+| **`R`** | Seçili bileşenleri 90° döndür |
+| **`Delete` / `Backspace`** | Seçili bileşen veya kabloları sil (otomatik `WireRepair` onarımı ile) |
+| **`Ctrl + K` veya `/`** | Hızlı Bileşen Arama & Ekleme Komut Paleti (`Spotlight`) |
 
 ---
 
 ## 📄 Lisans
-Bu proje eğitim, akademik araştırma ve açık kaynaklı mühendislik çalışmaları için geliştirilmiştir.
+
+Bu proje eğitim, akademik araştırma ve açık kaynaklı sayısal sistem mühendisliği çalışmaları için geliştirilmiştir.
