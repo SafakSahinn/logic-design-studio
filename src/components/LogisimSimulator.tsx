@@ -1227,10 +1227,62 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
         const targetWire = prev.find((w) => w.id === activeDragJoint.wireId);
         if (!targetWire) return prev;
 
-        const wStart = getWireStartPt(targetWire);
-        const wEnd = getWireEndPt(targetWire, wStart);
-        const isHoriz = wStart.y === wEnd.y;
-        const isVert = wStart.x === wEnd.x;
+        const ws = getWireStartPt(targetWire);
+        const we = getWireEndPt(targetWire, ws);
+        const isPureVertical = ws.x === we.x && (!targetWire.waypoints || targetWire.waypoints.length === 0);
+        const isPureHorizontal = ws.y === we.y && (!targetWire.waypoints || targetWire.waypoints.length === 0);
+
+        if (activeDragJoint.type === 'segment' && (isPureVertical || isPureHorizontal)) {
+          return prev.map((w) => {
+            if (w.id === targetWire.id) {
+              if (isPureVertical) {
+                return {
+                  ...w,
+                  fromCompId: '',
+                  fromPinId: `loc_${snappedX}_${ws.y}`,
+                  toCompId: '',
+                  toPinId: `loc_${snappedX}_${we.y}`,
+                  startPoint: { x: snappedX, y: ws.y },
+                  endPoint: { x: snappedX, y: we.y },
+                };
+              } else {
+                return {
+                  ...w,
+                  fromCompId: '',
+                  fromPinId: `loc_${ws.x}_${snappedY}`,
+                  toCompId: '',
+                  toPinId: `loc_${we.x}_${snappedY}`,
+                  startPoint: { x: ws.x, y: snappedY },
+                  endPoint: { x: we.x, y: snappedY },
+                };
+              }
+            }
+            // Stretch connected perpendicular wire endpoints that shared an endpoint with targetWire
+            const os = getWireStartPt(w);
+            const oe = getWireEndPt(w, os);
+            const sharesWsWithOs = os.x === ws.x && os.y === ws.y;
+            const sharesWeWithOs = os.x === we.x && os.y === we.y;
+            const sharesWsWithOe = oe.x === ws.x && oe.y === ws.y;
+            const sharesWeWithOe = oe.x === we.x && oe.y === we.y;
+
+            if (isPureVertical && os.y === oe.y) {
+              if (sharesWsWithOs || sharesWeWithOs) {
+                return { ...w, startPoint: { x: snappedX, y: os.y }, endPoint: oe };
+              }
+              if (sharesWsWithOe || sharesWeWithOe) {
+                return { ...w, startPoint: os, endPoint: { x: snappedX, y: oe.y } };
+              }
+            } else if (isPureHorizontal && os.x === oe.x) {
+              if (sharesWsWithOs || sharesWeWithOs) {
+                return { ...w, startPoint: { x: os.x, y: snappedY }, endPoint: oe };
+              }
+              if (sharesWsWithOe || sharesWeWithOe) {
+                return { ...w, startPoint: os, endPoint: { x: oe.x, y: snappedY } };
+              }
+            }
+            return w;
+          });
+        }
 
         return prev.map((w) => {
           if (w.id === activeDragJoint.wireId) {
@@ -1238,36 +1290,6 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
               const updatedWps = [...w.waypoints];
               updatedWps[activeDragJoint.index] = { x: snappedX, y: snappedY };
               return { ...w, waypoints: updatedWps };
-            }
-            // Straight vertical segment dragged horizontally
-            if (isVert && (!w.waypoints || w.waypoints.length === 0)) {
-              const newS = { x: snappedX, y: wStart.y };
-              const newE = { x: snappedX, y: wEnd.y };
-              return {
-                ...w,
-                fromCompId: '',
-                fromPinId: '',
-                toCompId: '',
-                toPinId: w.toPinId && !findPinById(w.toPinId) ? w.toPinId : `node_${w.id}`,
-                startPoint: newS,
-                branchPoint: newS,
-                endPoint: newE,
-              };
-            }
-            // Straight horizontal segment dragged vertically
-            if (isHoriz && (!w.waypoints || w.waypoints.length === 0)) {
-              const newS = { x: wStart.x, y: snappedY };
-              const newE = { x: wEnd.x, y: snappedY };
-              return {
-                ...w,
-                fromCompId: '',
-                fromPinId: '',
-                toCompId: '',
-                toPinId: w.toPinId && !findPinById(w.toPinId) ? w.toPinId : `node_${w.id}`,
-                startPoint: newS,
-                branchPoint: newS,
-                endPoint: newE,
-              };
             }
             return { ...w, elbowX: snappedX };
           }
@@ -1381,18 +1403,58 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
       setIsPanning(false);
     }
     if (draggingCompId) {
-      if (dragStartSnapshotRef.current && dragStartSnapshotRef.current.didMove) {
-        recordHistory(dragStartSnapshotRef.current.components, dragStartSnapshotRef.current.wires);
+      const didMove = !!(dragStartSnapshotRef.current && dragStartSnapshotRef.current.didMove);
+      if (didMove && dragStartSnapshotRef.current) {
+        const initialComps = dragStartSnapshotRef.current.components;
+        const initialWires = dragStartSnapshotRef.current.wires;
+        recordHistory(initialComps, initialWires);
+
+        const finalCoords = pendingDragCoordsRef.current || getCanvasCoords(e);
+        const offsets = dragGroupOffsetsRef.current;
+        const initialCompMap = new Map(initialComps.map((c) => [c.id, c]));
+        const movedCompDeltas = new Map<string, { dx: number; dy: number }>();
+
+        for (const [cId, off] of offsets.entries()) {
+          const rawX = finalCoords.x - off.x;
+          const rawY = finalCoords.y - off.y;
+          const snappedX = snapToGrid ? Math.max(10, Math.round(rawX / 10) * 10) : Math.max(10, Math.round(rawX));
+          const snappedY = snapToGrid ? Math.max(10, Math.round(rawY / 10) * 10) : Math.max(10, Math.round(rawY));
+          const c0 = initialCompMap.get(cId);
+          if (c0) {
+            movedCompDeltas.set(cId, { dx: snappedX - c0.x, dy: snappedY - c0.y });
+          }
+        }
+
+        const finalComps = initialComps.map((c) => {
+          const delta = movedCompDeltas.get(c.id);
+          const c0 = initialCompMap.get(c.id);
+          if (delta && c0) {
+            return updatePinPositions({ ...c, x: c0.x + delta.dx, y: c0.y + delta.dy });
+          }
+          return c;
+        });
+
+        const translatedWires =
+          initialWires.length > 0 && movedCompDeltas.size > 0
+            ? translateWiresForMovedComponents(initialWires, initialComps, movedCompDeltas)
+            : initialWires;
+
+        const repaired = repairWires(translatedWires, finalComps);
+        const sim = simulateCircuit(finalComps, repaired);
+        setComponents(sim.components);
+        setWires(sim.wires);
+      } else {
+        setWires((prev) => {
+          const repaired = repairWires(prev, components);
+          const sim = simulateCircuit(components, repaired);
+          setComponents(sim.components);
+          return sim.wires;
+        });
       }
+      pendingDragCoordsRef.current = null;
       dragStartSnapshotRef.current = null;
       setDraggingCompId(null);
       dragGroupOffsetsRef.current.clear();
-      setWires((prev) => {
-        const repaired = repairWires(prev, components);
-        const sim = simulateCircuit(components, repaired);
-        setComponents(sim.components);
-        return sim.wires;
-      });
     }
     if (selectionBox) {
       const minX = Math.min(selectionBox.startX, selectionBox.currentX);
@@ -2177,16 +2239,10 @@ ${wireXmls.join('\n')}
   };
 
 
-  // Resolves wire start point snapped to 10px grid
+  // Resolves wire start point snapped to 10px grid (Logisim Wire.e0)
   const getWireStartPt = (wire: CircuitWire): WirePoint => {
-    // 1. If connected directly to a live component pin and not a free-floating segment:
-    if (wire.fromPinId && !wire.branchPoint) {
-      const fromPin = findPinById(wire.fromPinId);
-      if (fromPin) return snapPt10({ x: fromPin.x, y: fromPin.y });
-    }
-    // 2. If branchPoint or startPoint is stored:
-    if (wire.branchPoint) return snapPt10(wire.branchPoint);
     if (wire.startPoint) return snapPt10(wire.startPoint);
+    if (wire.branchPoint) return snapPt10(wire.branchPoint);
     if (wire.fromPinId) {
       const fromPin = findPinById(wire.fromPinId);
       if (fromPin) return snapPt10({ x: fromPin.x, y: fromPin.y });
@@ -2194,10 +2250,13 @@ ${wireXmls.join('\n')}
     return { x: 0, y: 0 };
   };
 
+  // Resolves wire end point snapped to 10px grid (Logisim Wire.e1)
   const getWireEndPt = (wire: CircuitWire, startPt: WirePoint): WirePoint => {
-    const toPin = findPinById(wire.toPinId);
-    if (toPin) return snapPt10({ x: toPin.x, y: toPin.y });
     if (wire.endPoint) return snapPt10(wire.endPoint);
+    if (wire.toPinId) {
+      const toPin = findPinById(wire.toPinId);
+      if (toPin) return snapPt10({ x: toPin.x, y: toPin.y });
+    }
     return startPt;
   };
 
@@ -8030,7 +8089,23 @@ ${wireXmls.join('\n')}
               const endPt = getWireEndPt(wire, startPt);
 
               const segs = getWireOrthogonalSegments(wire, startPt, endPt);
-              const pathD = segmentsToSvgPath(segs);
+              let pathD = segmentsToSvgPath(segs);
+              if (
+                fromPin &&
+                snapTo10(fromPin.x) === startPt.x &&
+                snapTo10(fromPin.y) === startPt.y &&
+                (fromPin.x !== startPt.x || fromPin.y !== startPt.y)
+              ) {
+                pathD = `M ${fromPin.x},${fromPin.y} L ${startPt.x},${startPt.y} ${pathD}`;
+              }
+              if (
+                toPin &&
+                snapTo10(toPin.x) === endPt.x &&
+                snapTo10(toPin.y) === endPt.y &&
+                (toPin.x !== endPt.x || toPin.y !== endPt.y)
+              ) {
+                pathD = `${pathD} L ${toPin.x},${toPin.y}`;
+              }
 
               const defaultMidX = snapTo10((startPt.x + endPt.x) / 2);
               const effectiveMidX = wire.elbowX !== undefined ? snapTo10(wire.elbowX) : defaultMidX;
