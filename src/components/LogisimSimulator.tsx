@@ -147,10 +147,13 @@ const COMPACT_COMPONENT_NAMES: Record<string, { label: string; badge?: string }>
   pushbutton: { label: 'Basma Butonu', badge: 'Pulse' },
   dipSwitch4: { label: '4-Bit DIP SW', badge: 'DIP' },
   clock: { label: 'Saat Sinyali', badge: 'CLK' },
-  vcc: { label: 'Sabit 1', badge: 'VCC' },
-  gnd: { label: 'Sabit 0', badge: 'GND' },
+  vcc: { label: 'Sabit 1 (High)', badge: 'VCC' },
+  gnd: { label: 'Sabit 0 (Low)', badge: 'GND' },
+  tunnel: { label: 'Kablosuz Tünel', badge: 'Net' },
   led: { label: 'LED Lamba' },
-  sevenSeg: { label: '7-Segment' },
+  ledBar4: { label: '4-Bit LED Bar', badge: 'Bar' },
+  sevenSegment: { label: '7-Segment', badge: 'LED' },
+  sevenSeg: { label: '7-Segment', badge: 'LED' },
   hexDisplay: { label: 'Hex Gösterge', badge: '4-Bit' },
   probe: { label: 'Mantık Probu' },
   buzzer: { label: 'Buzzer', badge: 'Ses' },
@@ -162,25 +165,25 @@ const COMPACT_COMPONENT_NAMES: Record<string, { label: string; badge?: string }>
   fullAdder: { label: 'Tam Toplayıcı', badge: 'FA' },
   halfSubtractor: { label: 'Yarım Çıkarıcı', badge: 'HS' },
   fullSubtractor: { label: 'Tam Çıkarıcı', badge: 'FS' },
-  mux2to1: { label: '2:1 MUX' },
-  mux4to1: { label: '4:1 MUX' },
-  mux8to1: { label: '8:1 MUX', badge: '74HC151' },
-  demux1to2: { label: '1:2 DEMUX' },
-  demux1to4: { label: '1:4 DEMUX' },
+  mux2: { label: '2:1 MUX' },
+  mux4: { label: '4:1 MUX' },
+  mux8: { label: '8:1 MUX', badge: '74HC151' },
+  demux2: { label: '1:2 DEMUX' },
+  demux4: { label: '1:4 DEMUX' },
   decoder2to4: { label: '2:4 Decoder' },
   decoder3to8: { label: '3:8 Decoder', badge: '74HC138' },
   bcdTo7Seg: { label: 'BCD to 7-Seg', badge: '74LS47' },
   priorityEncoder4to2: { label: '4:2 Kodlayıcı', badge: '74HC148' },
-  comparator4bit: { label: 'Karşılaştırıcı', badge: '4-Bit' },
-  alu4bit: { label: '4-Bit ALU', badge: '74HC181' },
-  busSplitter: { label: 'Bus Ayırıcı', badge: 'Splitter' },
+  comparator4: { label: 'Karşılaştırıcı', badge: '4-Bit' },
+  alu4: { label: '4-Bit ALU', badge: '74HC181' },
+  splitter4: { label: 'Bus Ayırıcı', badge: 'Splitter' },
   srLatch: { label: 'SR Mandal', badge: 'Latch' },
   dFlipFlop: { label: 'D Flip-Flop', badge: 'D-FF' },
   jkFlipFlop: { label: 'JK Flip-Flop', badge: 'JK-FF' },
   tFlipFlop: { label: 'T Flip-Flop', badge: 'T-FF' },
-  register4bit: { label: '4-Bit Yazmaç', badge: '74HC173' },
-  counter4bit: { label: '4-Bit Sayaç', badge: '74HC161' },
-  shiftRegister4bit: { label: 'Kaydırmalı Yazmaç', badge: '74HC194' },
+  register4: { label: '4-Bit Yazmaç', badge: '74HC173' },
+  counter4: { label: '4-Bit Sayaç', badge: '74HC161' },
+  shiftRegister4: { label: 'Kaydırmalı Yazmaç', badge: '74HC194' },
   ram16x4: { label: '16x4 RAM', badge: 'Bellek' },
   rom16x4: { label: '16x4 ROM', badge: 'Bellek' },
 };
@@ -227,10 +230,11 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
 
   const handleAddComponentAt = (type: ComponentType, posX: number, posY: number) => {
     recordHistory();
-    const newComp = updatePinPositions(createComponentInstance(type, posX, posY));
+    const newComp = updatePinPositions(createComponentInstance(type, snapTo10(posX), snapTo10(posY)));
     setComponents((prev) => {
       const updated = [...prev, newComp];
-      const sim = simulateCircuit(updated, wires);
+      const repaired = repairWires(wires, updated);
+      const sim = simulateCircuit(updated, repaired);
       setWires(sim.wires);
       return sim.components;
     });
@@ -5284,7 +5288,7 @@ ${wireXmls.join('\n')}
       id: 'wiring',
       title: 'Kablolama & Giriş / Çıkış',
       icon: '🔌',
-      types: ['switch', 'pushbutton', 'dipSwitch4', 'clock', 'vcc', 'gnd', 'probe', 'busSplitter', 'constantHigh', 'constantLow'] as ComponentType[],
+      types: ['switch', 'pushbutton', 'dipSwitch4', 'clock', 'vcc', 'gnd', 'probe', 'splitter4', 'tunnel'] as ComponentType[],
     },
     {
       id: 'gates',
@@ -5296,25 +5300,25 @@ ${wireXmls.join('\n')}
       id: 'plexers',
       title: 'Plexers & Seçiciler',
       icon: '🔀',
-      types: ['mux2to1', 'mux4to1', 'mux8to1', 'demux1to2', 'demux1to4', 'decoder2to4', 'decoder3to8', 'priorityEncoder4to2'] as ComponentType[],
+      types: ['mux2', 'mux4', 'mux8', 'demux2', 'demux4', 'decoder2to4', 'decoder3to8', 'bcdTo7Seg', 'priorityEncoder4to2'] as ComponentType[],
     },
     {
       id: 'arithmetic',
       title: 'Aritmetik Devreler',
       icon: '➕',
-      types: ['halfAdder', 'fullAdder', 'halfSubtractor', 'fullSubtractor', 'comparator4bit', 'alu4bit'] as ComponentType[],
+      types: ['halfAdder', 'fullAdder', 'halfSubtractor', 'fullSubtractor', 'comparator4', 'alu4'] as ComponentType[],
     },
     {
       id: 'memory',
       title: 'Bellek & Sıralı Devreler',
       icon: '💾',
-      types: ['srLatch', 'dFlipFlop', 'jkFlipFlop', 'tFlipFlop', 'register4bit', 'counter4bit', 'shiftRegister4bit', 'ram16x4'] as ComponentType[],
+      types: ['srLatch', 'dFlipFlop', 'jkFlipFlop', 'tFlipFlop', 'register4', 'counter4', 'shiftRegister4', 'ram16x4', 'rom16x4'] as ComponentType[],
     },
     {
       id: 'displays',
       title: 'Göstergeler & Çıkışlar',
       icon: '💡',
-      types: ['led', 'sevenSeg', 'hexDisplay', 'dotMatrix8x8', 'rgbMatrix16x16', 'asciiKeyboard'] as ComponentType[],
+      types: ['led', 'ledBar4', 'sevenSegment', 'hexDisplay', 'dotMatrix8x8', 'rgbMatrix16x16', 'asciiKeyboard', 'textLabel'] as ComponentType[],
     },
     {
       id: 'audio',
