@@ -7,6 +7,7 @@ import {
   computeWireShortening,
   repairWires,
   translateWiresForMovedComponents,
+  computeGroupDragDeltas,
   getWireOrthogonalSegments,
   segmentsToSvgPath,
   getClosestPointOnWire,
@@ -1324,17 +1325,7 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
           const initialWires = dragStartSnapshotRef.current ? dragStartSnapshotRef.current.wires : [];
           const initialCompMap = new Map(initialComps.map((c) => [c.id, c]));
 
-          const movedCompDeltas = new Map<string, { dx: number; dy: number }>();
-          for (const [cId, off] of offsets.entries()) {
-            const rawX = currentCoords.x - off.x;
-            const rawY = currentCoords.y - off.y;
-            const snappedX = snapToGrid ? Math.max(10, Math.round(rawX / 10) * 10) : Math.max(10, Math.round(rawX));
-            const snappedY = snapToGrid ? Math.max(10, Math.round(rawY / 10) * 10) : Math.max(10, Math.round(rawY));
-            const c0 = initialCompMap.get(cId);
-            if (c0) {
-              movedCompDeltas.set(cId, { dx: snappedX - c0.x, dy: snappedY - c0.y });
-            }
-          }
+          const movedCompDeltas = computeGroupDragDeltas(offsets, initialComps, currentCoords, draggingCompId, snapToGrid);
 
           const updatedComps = initialComps.map((c) => {
             const delta = movedCompDeltas.get(c.id);
@@ -1420,18 +1411,7 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
         const finalCoords = pendingDragCoordsRef.current || getCanvasCoords(e);
         const offsets = dragGroupOffsetsRef.current;
         const initialCompMap = new Map(initialComps.map((c) => [c.id, c]));
-        const movedCompDeltas = new Map<string, { dx: number; dy: number }>();
-
-        for (const [cId, off] of offsets.entries()) {
-          const rawX = finalCoords.x - off.x;
-          const rawY = finalCoords.y - off.y;
-          const snappedX = snapToGrid ? Math.max(10, Math.round(rawX / 10) * 10) : Math.max(10, Math.round(rawX));
-          const snappedY = snapToGrid ? Math.max(10, Math.round(rawY / 10) * 10) : Math.max(10, Math.round(rawY));
-          const c0 = initialCompMap.get(cId);
-          if (c0) {
-            movedCompDeltas.set(cId, { dx: snappedX - c0.x, dy: snappedY - c0.y });
-          }
-        }
+        const movedCompDeltas = computeGroupDragDeltas(offsets, initialComps, finalCoords, draggingCompId, snapToGrid);
 
         const finalComps = initialComps.map((c) => {
           const delta = movedCompDeltas.get(c.id);
