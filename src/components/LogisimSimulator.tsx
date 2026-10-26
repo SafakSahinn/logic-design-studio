@@ -5648,6 +5648,19 @@ ${wireXmls.join('\n')}
                 </button>
                 <button
                   onClick={() => {
+                    setHdlActiveTab('verilog');
+                    setShowHdlModal(true);
+                    setActiveDesktopMenu(null);
+                  }}
+                  className={`w-full text-left px-3 py-1.5 flex items-center gap-2.5 cursor-pointer transition-colors ${
+                    isDark ? 'hover:bg-blue-600 hover:text-white' : 'hover:bg-blue-50 hover:text-blue-700'
+                  }`}
+                >
+                  <FileCode className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>Donanım Tanımlama Dili (HDL) & FPGA</span>
+                </button>
+                <button
+                  onClick={() => {
                     setShowSynthesizer(true);
                     setActiveDesktopMenu(null);
                   }}
@@ -6010,6 +6023,22 @@ ${wireXmls.join('\n')}
           >
             <Activity className="w-3.5 h-3.5 text-cyan-500" />
             <span>Osiloskop</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setHdlActiveTab('verilog');
+              setShowHdlModal(true);
+            }}
+            className={`px-2.5 py-1 border rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+              isDark
+                ? 'bg-emerald-950/70 hover:bg-emerald-900 border-emerald-800 text-emerald-300'
+                : 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-800'
+            }`}
+            title="Sentezlenebilir Verilog, VHDL ve FPGA Kısıt Kodlarını Üret"
+          >
+            <FileCode className="w-3.5 h-3.5 text-emerald-500" />
+            <span>HDL & FPGA</span>
           </button>
 
           <button
@@ -6984,6 +7013,24 @@ ${wireXmls.join('\n')}
               <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
             </button>
 
+            {/* HDL & FPGA */}
+            <button
+              onClick={() => {
+                setHdlActiveTab('verilog');
+                setShowHdlModal(true);
+              }}
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs ${
+                cadTheme === 'dark'
+                  ? 'bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border-emerald-800/60'
+                  : 'bg-emerald-50/80 hover:bg-emerald-100 text-emerald-800 border-emerald-200/80'
+              }`}
+              title="Sentezlenebilir Verilog, VHDL ve FPGA Kısıt Kodlarını Üret"
+            >
+              <FileCode className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden lg:inline">HDL & FPGA</span>
+              <span className="lg:hidden">HDL</span>
+            </button>
+
             {/* FSM Designer */}
             <button
               onClick={() => setShowFsmModal(true)}
@@ -7028,24 +7075,6 @@ ${wireXmls.join('\n')}
             >
               <Binary className="w-3.5 h-3.5 text-sky-400" />
               <span className="hidden md:inline">Hex Bellek</span>
-            </button>
-
-            {/* HDL & FPGA */}
-            <button
-              onClick={() => {
-                setHdlActiveTab('verilog');
-                setShowHdlModal(true);
-              }}
-              className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs ${
-                cadTheme === 'dark'
-                  ? 'bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border-emerald-800/60'
-                  : 'bg-emerald-50/80 hover:bg-emerald-100 text-emerald-800 border-emerald-200/80'
-              }`}
-              title="Sentezlenebilir Verilog, VHDL ve FPGA Kısıt Kodlarını Üret"
-            >
-              <FileCode className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="hidden lg:inline">HDL & FPGA</span>
-              <span className="lg:hidden">HDL</span>
             </button>
 
             {/* Circuit Statistics & CMOS Transistor Report */}
