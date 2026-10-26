@@ -6017,16 +6017,6 @@ ${wireXmls.join('\n')}
             </div>
 
             <button
-              onClick={() => handleResetView()}
-              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                isDark ? 'hover:bg-slate-800 text-slate-300 hover:text-white' : 'hover:bg-slate-100 text-slate-700 hover:text-slate-900'
-              }`}
-              title="Görünümü Sıfırla (%100)"
-            >
-              <Maximize2 className="w-3.5 h-3.5" />
-            </button>
-
-            <button
               onClick={() => toggleCadTheme()}
               className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                 isDark ? 'hover:bg-slate-800 text-amber-400' : 'hover:bg-slate-100 text-indigo-600'
