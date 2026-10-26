@@ -5828,391 +5828,408 @@ ${wireXmls.join('\n')}
     );
   };
 
-  // Render Desktop Ribbon Quick Toolbar
+  // Render Desktop Ribbon Quick Toolbar (2-Tier Non-Scrolling Layout)
   const renderDesktopRibbon = () => {
     const isDark = cadTheme === 'dark';
 
     return (
-      <div className={`h-11 border-b flex items-center px-3 gap-2 overflow-x-auto text-xs select-none transition-colors shrink-0 ${
-        isDark ? 'bg-[#0D1322] border-slate-800 text-slate-300' : 'bg-white border-slate-200 text-slate-700 shadow-2xs'
+      <div className={`flex flex-col select-none transition-colors shrink-0 ${
+        isDark ? 'bg-[#0D1322] text-slate-300' : 'bg-white text-slate-700'
       }`}>
-        {/* Section 1: Core Simulation Engine Controls */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          <button
-            onClick={() => setIsRunning(!isRunning)}
-            className={`px-3 py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs transition-all focus:outline-none select-none ${
-              isRunning
-                ? 'bg-amber-500 hover:bg-amber-600 text-white active:scale-95'
-                : 'bg-emerald-600 hover:bg-emerald-700 text-white active:scale-95'
-            }`}
-          >
-            {isRunning ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-            <span>{isRunning ? 'Durdur' : 'Çalıştır'}</span>
-          </button>
-
-          <button
-            onClick={handleSingleStep}
-            className={`px-2.5 py-1 rounded-xl text-xs font-bold border shadow-2xs flex items-center gap-1 cursor-pointer transition-colors select-none ${
-              isDark
-                ? 'bg-slate-800 hover:bg-slate-700 text-blue-300 border-slate-700'
-                : 'bg-slate-50 hover:bg-blue-50 text-blue-700 border-slate-200'
-            }`}
-            title="Sinyali tek bir adım / saat darbesi ilerletir"
-          >
-            <StepForward className="w-3.5 h-3.5" />
-            <span>Tek Adım</span>
-          </button>
-
-          {/* Clock Frequency Segmented Control */}
-          <div className={`flex items-center gap-0.5 p-0.5 rounded-xl border text-xs ${
-            isDark
-              ? 'bg-slate-800/90 border-slate-700 text-slate-300'
-              : 'bg-slate-100/80 border-slate-200 text-slate-600'
-          }`}>
-            <span className="px-1 text-[11px] font-semibold flex items-center gap-1">
-              <Activity className="w-3 h-3 text-blue-500" />
-              <span>Saat:</span>
-            </span>
-            {[0.5, 1, 2, 4, 6, 8].map((hz) => (
+        {/* Tier 1: Core Operations, Simulation & View (Eski Temel Format) */}
+        <div className={`h-9 border-b flex items-center justify-between px-3 text-xs ${
+          isDark ? 'border-slate-800' : 'border-slate-200 shadow-2xs'
+        }`}>
+          {/* Left: File actions, Undo/Redo & Simulation */}
+          <div className="flex items-center gap-1.5">
+            {/* File Quick Actions */}
+            <div className="flex items-center gap-0.5">
               <button
-                key={hz}
-                onClick={() => setClockHz(hz)}
-                className={`px-1.5 py-0.5 rounded-lg text-[10.5px] font-mono font-bold cursor-pointer transition-colors outline-none select-none ${
-                  clockHz === hz
-                    ? isDark
-                      ? 'bg-blue-600 text-white shadow-xs'
-                      : 'bg-white text-blue-700 shadow-xs'
-                    : isDark
-                    ? 'text-slate-400 hover:text-slate-100'
-                    : 'text-slate-500 hover:text-slate-800'
+                onClick={() => handleClearCanvas()}
+                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                  isDark ? 'hover:bg-slate-800 text-slate-300 hover:text-white' : 'hover:bg-slate-100 text-slate-700 hover:text-slate-900'
+                }`}
+                title="Yeni Devre (Ctrl+N)"
+              >
+                <FilePlus className="w-3.5 h-3.5 text-blue-500" />
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                  isDark ? 'hover:bg-slate-800 text-slate-300 hover:text-white' : 'hover:bg-slate-100 text-slate-700 hover:text-slate-900'
+                }`}
+                title="Devre Aç (Ctrl+O)"
+              >
+                <FolderOpen className="w-3.5 h-3.5 text-amber-500" />
+              </button>
+              <button
+                onClick={() => handleExportJSON()}
+                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                  isDark ? 'hover:bg-slate-800 text-slate-300 hover:text-white' : 'hover:bg-slate-100 text-slate-700 hover:text-slate-900'
+                }`}
+                title="JSON Kaydet (Ctrl+S)"
+              >
+                <Save className="w-3.5 h-3.5 text-emerald-500" />
+              </button>
+            </div>
+
+            <div className={`w-[1px] h-4 mx-1 ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`} />
+
+            {/* Undo / Redo / Delete */}
+            <div className="flex items-center gap-0.5">
+              <button
+                onClick={() => handleUndo()}
+                disabled={historyStack.length === 0}
+                className={`p-1.5 rounded-lg transition-colors disabled:opacity-30 cursor-pointer ${
+                  isDark ? 'hover:bg-slate-800 text-slate-300 hover:text-white' : 'hover:bg-slate-100 text-slate-700 hover:text-slate-900'
+                }`}
+                title="Geri Al (Ctrl+Z)"
+              >
+                <Undo2 className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => handleRedo()}
+                disabled={redoStack.length === 0}
+                className={`p-1.5 rounded-lg transition-colors disabled:opacity-30 cursor-pointer ${
+                  isDark ? 'hover:bg-slate-800 text-slate-300 hover:text-white' : 'hover:bg-slate-100 text-slate-700 hover:text-slate-900'
+                }`}
+                title="İleri Al (Ctrl+Y)"
+              >
+                <Redo2 className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => handleDeleteSelected()}
+                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                  isDark ? 'hover:bg-red-900/50 text-slate-300 hover:text-red-300' : 'hover:bg-red-50 text-slate-700 hover:text-red-600'
+                }`}
+                title="Seçilenleri Sil (Del)"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className={`w-[1px] h-4 mx-1 ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`} />
+
+            {/* Simulation Engine Controls */}
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setIsRunning(!isRunning)}
+                className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs transition-all focus:outline-none select-none ${
+                  isRunning
+                    ? 'bg-amber-500 hover:bg-amber-600 text-white active:scale-95'
+                    : 'bg-emerald-600 hover:bg-emerald-700 text-white active:scale-95'
                 }`}
               >
-                {hz}Hz
+                {isRunning ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                <span>{isRunning ? 'Durdur' : 'Çalıştır'}</span>
               </button>
-            ))}
+
+              <button
+                onClick={handleSingleStep}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold border shadow-2xs flex items-center gap-1 cursor-pointer transition-colors select-none ${
+                  isDark
+                    ? 'bg-slate-800 hover:bg-slate-700 text-blue-300 border-slate-700'
+                    : 'bg-slate-50 hover:bg-blue-50 text-blue-700 border-slate-200'
+                }`}
+                title="Sinyali tek bir adım / saat darbesi ilerletir"
+              >
+                <StepForward className="w-3.5 h-3.5 text-blue-500" />
+                <span>Tek Adım</span>
+              </button>
+
+              {/* Clock Frequency Segmented Control */}
+              <div className={`flex items-center gap-0.5 p-0.5 rounded-lg border text-xs ${
+                isDark
+                  ? 'bg-slate-800/90 border-slate-700 text-slate-300'
+                  : 'bg-slate-100/80 border-slate-200 text-slate-600'
+              }`}>
+                <span className="px-1 text-[10.5px] font-semibold flex items-center gap-1">
+                  <Activity className="w-3 h-3 text-blue-500" />
+                  <span>Saat:</span>
+                </span>
+                {[0.5, 1, 2, 4, 6, 8].map((hz) => (
+                  <button
+                    key={hz}
+                    onClick={() => setClockHz(hz)}
+                    className={`px-1.5 py-0.5 rounded text-[10.5px] font-mono font-bold cursor-pointer transition-colors outline-none select-none ${
+                      clockHz === hz
+                        ? isDark
+                          ? 'bg-blue-600 text-white shadow-xs'
+                          : 'bg-white text-blue-700 shadow-xs'
+                        : isDark
+                        ? 'text-slate-400 hover:text-slate-100'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    {hz}Hz
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div className={`w-[1px] h-5 mx-1 shrink-0 ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`} />
-
-        {/* Section 2: Analysis & Engineering Suite (Matching Web Version in user image) */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 hidden 2xl:inline-block mr-0.5">
-            Analiz Suite:
-          </span>
-
-          {/* Truth Table */}
-          <button
-            onClick={() => setShowTruthTable(true)}
-            className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs ${
-              isDark
-                ? 'bg-indigo-950/60 hover:bg-indigo-900/80 text-indigo-300 border-indigo-800/60'
-                : 'bg-indigo-50/80 hover:bg-indigo-100 text-indigo-700 border-indigo-200/80'
-            }`}
-            title="Devrenin Tüm Doğruluk Tablosunu Üret"
-          >
-            <Table className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Doğruluk Tablosu</span>
-          </button>
-
-          {/* Boolean Logic Synthesizer */}
-          <button
-            onClick={() => setShowSynthesizer(true)}
-            className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs ${
-              isDark
-                ? 'bg-amber-950/60 hover:bg-amber-900/80 text-amber-300 border-amber-800/60'
-                : 'bg-amber-50/80 hover:bg-amber-100 text-amber-800 border-amber-200/80'
-            }`}
-            title="Boole Fonksiyonundan Otomatik Mantık Devresi Sentezle"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            <span>Boole Sentez</span>
-          </button>
-
-          {/* Scope / Waveform */}
-          <button
-            onClick={() => setShowWaveform((prev) => !prev)}
-            className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs ${
-              showWaveform
-                ? 'bg-slate-900 text-cyan-300 border-slate-700'
-                : isDark
-                ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
-                : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
-            }`}
-            title="Sayısal Zamanlama Diyagramı / Osiloskop Panelini Aç/Kapat"
-          >
-            <Activity className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Osiloskop</span>
-            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-          </button>
-
-          {/* FSM Designer */}
-          <button
-            onClick={() => setShowFsmModal(true)}
-            className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs ${
-              isDark
-                ? 'bg-pink-950/60 hover:bg-pink-900/80 text-pink-300 border-pink-800/60'
-                : 'bg-pink-50/80 hover:bg-pink-100 text-pink-700 border-pink-200/80'
-            }`}
-            title="Durum Makinesi (FSM) Tasarla ve Devreye Dönüştür"
-          >
-            <Workflow className="w-3.5 h-3.5 text-pink-400" />
-            <span>FSM Tasarla</span>
-          </button>
-
-          {/* Testbench */}
-          <button
-            onClick={() => {
-              if (!testbenchText) handleAutoGenerateTestbench();
-              setShowTestbenchModal(true);
-            }}
-            className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs ${
-              isDark
-                ? 'bg-violet-950/60 hover:bg-violet-900/80 text-violet-300 border-violet-800/60'
-                : 'bg-violet-50/80 hover:bg-violet-100 text-violet-700 border-violet-200/80'
-            }`}
-            title="Otomatik Test Vektörleri ve Testbench Koşturucu"
-          >
-            <FlaskConical className="w-3.5 h-3.5 text-violet-400" />
-            <span>Testbench</span>
-          </button>
-
-          {/* Hex Memory Matrix */}
-          <button
-            onClick={() => handleOpenHexEditor()}
-            className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs ${
-              isDark
-                ? 'bg-sky-950/60 hover:bg-sky-900/80 text-sky-300 border-sky-800/60'
-                : 'bg-sky-50/80 hover:bg-sky-100 text-sky-800 border-sky-200/80'
-            }`}
-            title="RAM ve ROM Bellek Hücrelerini Hex Matrisinde Canlı Düzenle"
-          >
-            <Binary className="w-3.5 h-3.5 text-sky-400" />
-            <span>Hex Bellek</span>
-          </button>
-
-          {/* HDL & FPGA */}
-          <button
-            onClick={() => {
-              setHdlActiveTab('verilog');
-              setShowHdlModal(true);
-            }}
-            className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs ${
-              isDark
-                ? 'bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border-emerald-800/60'
-                : 'bg-emerald-50/80 hover:bg-emerald-100 text-emerald-800 border-emerald-200/80'
-            }`}
-            title="Sentezlenebilir Verilog, VHDL ve FPGA Kısıt Kodlarını Üret"
-          >
-            <FileCode className="w-3.5 h-3.5 text-emerald-400" />
-            <span>HDL & FPGA</span>
-          </button>
-
-          {/* Circuit Statistics & CMOS Transistor Report */}
-          <button
-            onClick={handleOpenStatsModal}
-            className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs ${
-              isDark
-                ? 'bg-blue-950/60 hover:bg-blue-900/80 text-blue-300 border-blue-800/60'
-                : 'bg-blue-50/80 hover:bg-blue-100 text-blue-700 border-blue-200/80'
-            }`}
-            title="Devre İstatistikleri, CMOS Transistör Sayısı ve Mantık Derinliği Raporu"
-          >
-            <BarChart3 className="w-3.5 h-3.5 text-blue-400" />
-            <span>İstatistik & CMOS</span>
-          </button>
-        </div>
-
-        <div className={`w-[1px] h-5 mx-1 shrink-0 ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`} />
-
-        {/* Section 3: Subcircuits, Datasheets & Persistence */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          {/* IC Paketle */}
-          <button
-            onClick={() => setShowSubcircuitModal(true)}
-            className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs ${
-              isDark
-                ? 'bg-blue-950/70 hover:bg-blue-900/90 text-blue-300 border-blue-800/60'
-                : 'bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 text-blue-800 border-blue-200'
-            }`}
-            title="Tuvaldeki Devreyi Özel Entegre (IC / Alt Devre) Olarak Paketle"
-          >
-            <Package className="w-3.5 h-3.5 text-blue-400" />
-            <span>IC Paketle</span>
-          </button>
-
-          {/* Datasheets */}
-          <button
-            onClick={() => setShowDatasheetModal(true)}
-            className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs ${
-              isDark
-                ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
-                : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
-            }`}
-            title="74xx Serisi ve Entegre Bacak Şemaları"
-          >
-            <FileText className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Datasheets</span>
-          </button>
-
-          {/* Save / Load / Export cluster (Kaydet, Yükle, PNG, SVG, .circ) */}
-          <div className={`flex items-center gap-0.5 p-0.5 rounded-xl border shadow-2xs ${
-            isDark ? 'bg-slate-800/90 border-slate-700' : 'bg-slate-100/90 border-slate-200'
-          }`}>
-            <button
-              onClick={handleExportJSON}
-              className={`px-2 py-0.5 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
-                isDark ? 'text-slate-300 hover:text-white hover:bg-slate-700' : 'text-slate-700 hover:text-blue-700 hover:bg-white'
-              }`}
-              title="Devreyi JSON Olarak Kaydet"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Kaydet</span>
-            </button>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className={`px-2 py-0.5 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
-                isDark ? 'text-slate-300 hover:text-white hover:bg-slate-700' : 'text-slate-700 hover:text-blue-700 hover:bg-white'
-              }`}
-              title="Bilgisayardan JSON Yükle"
-            >
-              <Upload className="w-3.5 h-3.5" />
-              <span>Yükle</span>
-            </button>
-            <button
-              onClick={handleExportPNG}
-              className={`px-2 py-0.5 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
-                isDark ? 'text-slate-300 hover:text-emerald-400 hover:bg-slate-700' : 'text-slate-700 hover:text-emerald-700 hover:bg-white'
-              }`}
-              title="Devre Şemasını PNG Resim Olarak İndir"
-            >
-              <ImageIcon className="w-3.5 h-3.5 text-emerald-400" />
-              <span>PNG</span>
-            </button>
-            <button
-              onClick={handleExportSVG}
-              className={`px-2 py-0.5 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
-                isDark ? 'text-slate-300 hover:text-indigo-400 hover:bg-slate-700' : 'text-slate-700 hover:text-indigo-700 hover:bg-white'
-              }`}
-              title="Devre Şemasını Vektörel SVG Olarak İndir"
-            >
-              <Download className="w-3.5 h-3.5 text-indigo-400" />
-              <span>SVG</span>
-            </button>
-            <button
-              onClick={handleExportCirc}
-              className={`px-2 py-0.5 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
-                isDark ? 'text-slate-300 hover:text-sky-400 hover:bg-slate-700' : 'text-slate-700 hover:text-sky-700 hover:bg-white'
-              }`}
-              title="Devreyi Standart (.circ) CAD XML Dosyası Olarak Dışa Aktar"
-            >
-              <FileCode className="w-3.5 h-3.5 text-sky-400" />
-              <span>.circ</span>
-            </button>
-          </div>
-        </div>
-
-        <div className={`w-[1px] h-5 mx-1 shrink-0 ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`} />
-
-        {/* Section 4: Desktop EDA Extras & View Toggles */}
-        <div className="flex items-center gap-1.5 shrink-0 ml-auto">
-          {/* Circuit Presets Button */}
-          <button
-            onClick={() => setShowPresetsModal(true)}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
-              isDark
-                ? 'bg-amber-950/60 hover:bg-amber-900/80 border-amber-700/60 text-amber-300'
-                : 'bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-800 shadow-2xs'
-            }`}
-            title="Hazır Örnek Devreler Kütüphanesi"
-          >
-            <Zap className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
-            <span className="hidden xl:inline">Hazır Devreler</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
-              isDark ? 'bg-amber-500/30 text-amber-200' : 'bg-amber-200/80 text-amber-900 font-bold'
+          {/* Right: Export Cluster & View Controls */}
+          <div className="flex items-center gap-1.5">
+            {/* Quick Export Cluster */}
+            <div className={`flex items-center gap-0.5 p-0.5 rounded-lg border shadow-2xs ${
+              isDark ? 'bg-slate-800/90 border-slate-700' : 'bg-slate-100/90 border-slate-200'
             }`}>
-              {CIRCUIT_PRESETS.length}
+              <button
+                onClick={handleExportPNG}
+                className={`px-2 py-0.5 rounded text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
+                  isDark ? 'text-slate-300 hover:text-emerald-400 hover:bg-slate-700' : 'text-slate-700 hover:text-emerald-700 hover:bg-white'
+                }`}
+                title="PNG Resim Olarak İndir"
+              >
+                <ImageIcon className="w-3 h-3 text-emerald-400" />
+                <span>PNG</span>
+              </button>
+              <button
+                onClick={handleExportSVG}
+                className={`px-2 py-0.5 rounded text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
+                  isDark ? 'text-slate-300 hover:text-indigo-400 hover:bg-slate-700' : 'text-slate-700 hover:text-indigo-700 hover:bg-white'
+                }`}
+                title="Vektörel SVG Olarak İndir"
+              >
+                <Download className="w-3 h-3 text-indigo-400" />
+                <span>SVG</span>
+              </button>
+              <button
+                onClick={handleExportCirc}
+                className={`px-2 py-0.5 rounded text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
+                  isDark ? 'text-slate-300 hover:text-sky-400 hover:bg-slate-700' : 'text-slate-700 hover:text-sky-700 hover:bg-white'
+                }`}
+                title="Logisim (.circ) CAD Dosyası Olarak İndir"
+              >
+                <FileCode className="w-3 h-3 text-sky-400" />
+                <span>.circ</span>
+              </button>
+            </div>
+
+            <div className={`w-[1px] h-4 mx-1 ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`} />
+
+            <div
+              className="px-2 py-0.5 rounded-lg text-[11px] font-mono font-bold border border-blue-500/40 bg-blue-500/10 text-blue-500 select-none flex items-center gap-1"
+              title="90° Standart Logisim CAD Hatları"
+            >
+              <Activity className="w-3 h-3 text-blue-500" />
+              <span>90° Dik Tel</span>
+            </div>
+
+            <button
+              onClick={() => handleResetView()}
+              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                isDark ? 'hover:bg-slate-800 text-slate-300 hover:text-white' : 'hover:bg-slate-100 text-slate-700 hover:text-slate-900'
+              }`}
+              title="Görünümü Sıfırla (%100)"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+            </button>
+
+            <button
+              onClick={() => toggleCadTheme()}
+              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                isDark ? 'hover:bg-slate-800 text-amber-400' : 'hover:bg-slate-100 text-indigo-600'
+              }`}
+              title={`Tema: ${isDark ? 'Aydınlık Moda Geç' : 'Karanlık Moda Geç'}`}
+            >
+              {isDark ? <Sun className="w-3.5 h-3.5 text-amber-400" /> : <Moon className="w-3.5 h-3.5 text-indigo-600" />}
+            </button>
+          </div>
+        </div>
+
+        {/* Tier 2: Alt Sıra - Analiz & Mühendislik Suite (Yeni Eklenenler) */}
+        <div className={`h-9 border-b flex items-center justify-between px-3 text-xs ${
+          isDark ? 'bg-[#090E1A] border-slate-800' : 'bg-slate-50 border-slate-200'
+        }`}>
+          {/* Left: Analiz Suite Butonları */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mr-1">
+              Analiz Suite:
             </span>
-          </button>
 
-          {/* Undo / Redo */}
-          <div className="flex items-center gap-0.5">
+            {/* Doğruluk Tablosu */}
             <button
-              onClick={() => handleUndo()}
-              disabled={historyStack.length === 0}
-              className={`p-1.5 rounded-lg transition-colors disabled:opacity-30 cursor-pointer ${
-                isDark ? 'hover:bg-slate-800 text-slate-300 hover:text-white' : 'hover:bg-slate-100 text-slate-700 hover:text-slate-900'
+              onClick={() => setShowTruthTable(true)}
+              className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1 cursor-pointer transition-colors shadow-2xs ${
+                isDark
+                  ? 'bg-indigo-950/60 hover:bg-indigo-900/80 text-indigo-300 border-indigo-800/60'
+                  : 'bg-indigo-50/80 hover:bg-indigo-100 text-indigo-700 border-indigo-200/80'
               }`}
-              title="Geri Al (Ctrl+Z)"
+              title="Devrenin Tüm Doğruluk Tablosunu Üret"
             >
-              <Undo2 className="w-3.5 h-3.5" />
+              <Table className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Doğruluk Tablosu</span>
             </button>
+
+            {/* Boole Sentez */}
             <button
-              onClick={() => handleRedo()}
-              disabled={redoStack.length === 0}
-              className={`p-1.5 rounded-lg transition-colors disabled:opacity-30 cursor-pointer ${
-                isDark ? 'hover:bg-slate-800 text-slate-300 hover:text-white' : 'hover:bg-slate-100 text-slate-700 hover:text-slate-900'
+              onClick={() => setShowSynthesizer(true)}
+              className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1 cursor-pointer transition-colors shadow-2xs ${
+                isDark
+                  ? 'bg-amber-950/60 hover:bg-amber-900/80 text-amber-300 border-amber-800/60'
+                  : 'bg-amber-50/80 hover:bg-amber-100 text-amber-800 border-amber-200/80'
               }`}
-              title="İleri Al (Ctrl+Y)"
+              title="Boole Fonksiyonundan Otomatik Mantık Devresi Sentezle"
             >
-              <Redo2 className="w-3.5 h-3.5" />
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>Boole Sentez</span>
+            </button>
+
+            {/* Osiloskop */}
+            <button
+              onClick={() => setShowWaveform((prev) => !prev)}
+              className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1 cursor-pointer transition-colors shadow-2xs ${
+                showWaveform
+                  ? 'bg-slate-900 text-cyan-300 border-slate-700'
+                  : isDark
+                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+                  : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
+              }`}
+              title="Sayısal Zamanlama Diyagramı / Osiloskop Panelini Aç/Kapat"
+            >
+              <Activity className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Osiloskop</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+            </button>
+
+            {/* FSM Tasarla */}
+            <button
+              onClick={() => setShowFsmModal(true)}
+              className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1 cursor-pointer transition-colors shadow-2xs ${
+                isDark
+                  ? 'bg-pink-950/60 hover:bg-pink-900/80 text-pink-300 border-pink-800/60'
+                  : 'bg-pink-50/80 hover:bg-pink-100 text-pink-700 border-pink-200/80'
+              }`}
+              title="Durum Makinesi (FSM) Tasarla ve Devreye Dönüştür"
+            >
+              <Workflow className="w-3.5 h-3.5 text-pink-400" />
+              <span>FSM Tasarla</span>
+            </button>
+
+            {/* Testbench */}
+            <button
+              onClick={() => {
+                if (!testbenchText) handleAutoGenerateTestbench();
+                setShowTestbenchModal(true);
+              }}
+              className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1 cursor-pointer transition-colors shadow-2xs ${
+                isDark
+                  ? 'bg-violet-950/60 hover:bg-violet-900/80 text-violet-300 border-violet-800/60'
+                  : 'bg-violet-50/80 hover:bg-violet-100 text-violet-700 border-violet-200/80'
+              }`}
+              title="Otomatik Test Vektörleri ve Testbench Koşturucu"
+            >
+              <FlaskConical className="w-3.5 h-3.5 text-violet-400" />
+              <span>Testbench</span>
+            </button>
+
+            {/* Hex Bellek */}
+            <button
+              onClick={() => handleOpenHexEditor()}
+              className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1 cursor-pointer transition-colors shadow-2xs ${
+                isDark
+                  ? 'bg-sky-950/60 hover:bg-sky-900/80 text-sky-300 border-sky-800/60'
+                  : 'bg-sky-50/80 hover:bg-sky-100 text-sky-800 border-sky-200/80'
+              }`}
+              title="RAM ve ROM Bellek Hücrelerini Hex Matrisinde Canlı Düzenle"
+            >
+              <Binary className="w-3.5 h-3.5 text-sky-400" />
+              <span>Hex Bellek</span>
+            </button>
+
+            {/* HDL & FPGA */}
+            <button
+              onClick={() => {
+                setHdlActiveTab('verilog');
+                setShowHdlModal(true);
+              }}
+              className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1 cursor-pointer transition-colors shadow-2xs ${
+                isDark
+                  ? 'bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border-emerald-800/60'
+                  : 'bg-emerald-50/80 hover:bg-emerald-100 text-emerald-800 border-emerald-200/80'
+              }`}
+              title="Sentezlenebilir Verilog, VHDL ve FPGA Kısıt Kodlarını Üret"
+            >
+              <FileCode className="w-3.5 h-3.5 text-emerald-400" />
+              <span>HDL & FPGA</span>
+            </button>
+
+            {/* İstatistik & CMOS */}
+            <button
+              onClick={handleOpenStatsModal}
+              className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1 cursor-pointer transition-colors shadow-2xs ${
+                isDark
+                  ? 'bg-blue-950/60 hover:bg-blue-900/80 text-blue-300 border-blue-800/60'
+                  : 'bg-blue-50/80 hover:bg-blue-100 text-blue-700 border-blue-200/80'
+              }`}
+              title="Devre İstatistikleri, CMOS Transistör Sayısı ve Mantık Derinliği Raporu"
+            >
+              <BarChart3 className="w-3.5 h-3.5 text-blue-400" />
+              <span>İstatistik & CMOS</span>
             </button>
           </div>
 
-          {/* K-Map & Sayı Dönüşümü */}
-          <button
-            onClick={() => setShowKMapModal(true)}
-            className={`px-2 py-1 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer border ${
-              isDark
-                ? 'bg-blue-950/70 hover:bg-blue-900 border-blue-800 text-blue-300'
-                : 'bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700'
-            }`}
-            title="Karnaugh Haritası (K-Map Solver)"
-          >
-            <Calculator className="w-3.5 h-3.5 text-blue-500" />
-            <span>K-Map</span>
-          </button>
+          {/* Right: Entegre Paketleme, Datasheets, K-Map & Sayı Dönüşümü */}
+          <div className="flex items-center gap-1.5">
+            {/* IC Paketle */}
+            <button
+              onClick={() => setShowSubcircuitModal(true)}
+              className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1 cursor-pointer transition-colors shadow-2xs ${
+                isDark
+                  ? 'bg-blue-950/70 hover:bg-blue-900/90 text-blue-300 border-blue-800/60'
+                  : 'bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 text-blue-800 border-blue-200'
+              }`}
+              title="Tuvaldeki Devreyi Özel Entegre (IC / Alt Devre) Olarak Paketle"
+            >
+              <Package className="w-3.5 h-3.5 text-blue-400" />
+              <span>IC Paketle</span>
+            </button>
 
-          <button
-            onClick={() => setShowNumberConverterModal(true)}
-            className={`px-2 py-1 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer border ${
-              isDark
-                ? 'bg-emerald-950/70 hover:bg-emerald-900 border-emerald-800 text-emerald-300'
-                : 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700'
-            }`}
-            title="Sayı Sistemleri Taban Dönüştürücü"
-          >
-            <Binary className="w-3.5 h-3.5 text-emerald-500" />
-            <span>Taban</span>
-          </button>
+            {/* Datasheets */}
+            <button
+              onClick={() => setShowDatasheetModal(true)}
+              className={`px-2.5 py-1 rounded-xl text-xs font-semibold border flex items-center gap-1 cursor-pointer transition-colors shadow-2xs ${
+                isDark
+                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+                  : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
+              }`}
+              title="74xx Serisi ve Entegre Bacak Şemaları"
+            >
+              <FileText className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Datasheets</span>
+            </button>
 
-          <div
-            className="px-2 py-1 rounded-xl text-xs font-mono font-bold border border-blue-500/40 bg-blue-500/10 text-blue-500 select-none flex items-center gap-1"
-            title="90° Standart Logisim CAD Hatları"
-          >
-            <Activity className="w-3 h-3 text-blue-500" />
-            <span className="hidden xl:inline">90° Tel</span>
+            <div className={`w-[1px] h-4 mx-0.5 ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`} />
+
+            {/* K-Map */}
+            <button
+              onClick={() => setShowKMapModal(true)}
+              className={`px-2 py-1 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer border ${
+                isDark
+                  ? 'bg-blue-950/70 hover:bg-blue-900 border-blue-800 text-blue-300'
+                  : 'bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700'
+              }`}
+              title="Karnaugh Haritası (K-Map Solver)"
+            >
+              <Calculator className="w-3.5 h-3.5 text-blue-500" />
+              <span>K-Map</span>
+            </button>
+
+            {/* Sayı Dönüşümü */}
+            <button
+              onClick={() => setShowNumberConverterModal(true)}
+              className={`px-2 py-1 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer border ${
+                isDark
+                  ? 'bg-emerald-950/70 hover:bg-emerald-900 border-emerald-800 text-emerald-300'
+                  : 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700'
+              }`}
+              title="Sayı Sistemleri Taban Dönüştürücü"
+            >
+              <Binary className="w-3.5 h-3.5 text-emerald-500" />
+              <span>Taban</span>
+            </button>
           </div>
-
-          <button
-            onClick={() => handleResetView()}
-            className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-              isDark ? 'hover:bg-slate-800 text-slate-300 hover:text-white' : 'hover:bg-slate-100 text-slate-700 hover:text-slate-900'
-            }`}
-            title="Görünümü Sıfırla (%100)"
-          >
-            <Maximize2 className="w-3.5 h-3.5" />
-          </button>
-
-          <button
-            onClick={() => toggleCadTheme()}
-            className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-              isDark ? 'hover:bg-slate-800 text-amber-400' : 'hover:bg-slate-100 text-indigo-600'
-            }`}
-            title={`Tema: ${isDark ? 'Aydınlık Moda Geç' : 'Karanlık Moda Geç'}`}
-          >
-            {isDark ? <Sun className="w-3.5 h-3.5 text-amber-400" /> : <Moon className="w-3.5 h-3.5 text-indigo-600" />}
-          </button>
         </div>
       </div>
     );
