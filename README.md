@@ -15,7 +15,7 @@
 
 ---
 
-[🖥️ **Masaüstü Uygulaması (logic-design-studio)**](https://github.com/SafakSahinn/logic-design-studio) • [🌐 **Web Platformu (logic-design-web)**](https://github.com/SafakSahinn/logic-design-web)
+[🖥️ **Masaüstü Uygulaması (logic-design-studio)**](https://github.com/SafakSahinn/logic-design-studio) • [🌐 **Web Platformu (logic-design-web)**](https://github.com/SafakSahinn/logic-design-web) • [🚀 **Canlı Web Sürümü (Live App)**](https://safaksahinn.github.io/logic-design-web/)
 
 </div>
 
