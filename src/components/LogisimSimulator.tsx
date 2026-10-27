@@ -5,7 +5,9 @@ import {
   computeLogisimWireDirection,
   getLogisimWiringToolSegments,
   computeWireShortening,
+  moveWireSegment,
   repairWires,
+  rerouteWiresToRemappedPins,
   translateWiresForMovedComponents,
   computeGroupDragDeltas,
   getWireOrthogonalSegments,
@@ -36,6 +38,7 @@ import {
   CHIPTUNE_NOTE_NAMES,
   generateTruthTable,
   synthesizeCircuitFromBooleanExpression,
+  getMultiInputGatePinRelY,
 } from '../utils/circuitEngine';
 import {
   Play,
@@ -543,7 +546,14 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
   } | null>(null);
 
   const wiringStartTimeRef = useRef<number>(0);
-  const lastWireConnectedTimeRef = useRef<number>(0);
+  // Set when a wire is finished on mouseup, so the click event of that same gesture doesn't start a new wire
+  const suppressPinClickRef = useRef<boolean>(false);
+  // Wires/components as they were when a segment drag started (segment moves are recomputed from it)
+  const segmentDragStartRef = useRef<{
+    components: CircuitComponentInstance[];
+    wires: CircuitWire[];
+    didMove: boolean;
+  } | null>(null);
 
   const draggingWireJointRef = useRef<{
     wireId: string;
@@ -1236,67 +1246,18 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
     if (activeDragJoint) {
       const snappedX = snapToGrid ? Math.round(coords.x / 10) * 10 : Math.round(coords.x);
       const snappedY = snapToGrid ? Math.round(coords.y / 10) * 10 : Math.round(coords.y);
+      const segStart = segmentDragStartRef.current;
+      if (activeDragJoint.type === 'segment' && segStart) {
+        // Recompute from the drag-start wires so pin connections get jog wires instead of tearing off
+        const moved = moveWireSegment(segStart.wires, segStart.components, activeDragJoint.wireId, {
+          x: snappedX,
+          y: snappedY,
+        });
+        if (moved !== segStart.wires) segStart.didMove = true;
+        setWires(moved);
+        return;
+      }
       setWires((prev) => {
-        const targetWire = prev.find((w) => w.id === activeDragJoint.wireId);
-        if (!targetWire) return prev;
-
-        const ws = getWireStartPt(targetWire);
-        const we = getWireEndPt(targetWire, ws);
-        const isPureVertical = ws.x === we.x && (!targetWire.waypoints || targetWire.waypoints.length === 0);
-        const isPureHorizontal = ws.y === we.y && (!targetWire.waypoints || targetWire.waypoints.length === 0);
-
-        if (activeDragJoint.type === 'segment' && (isPureVertical || isPureHorizontal)) {
-          return prev.map((w) => {
-            if (w.id === targetWire.id) {
-              if (isPureVertical) {
-                return {
-                  ...w,
-                  fromCompId: '',
-                  fromPinId: `loc_${snappedX}_${ws.y}`,
-                  toCompId: '',
-                  toPinId: `loc_${snappedX}_${we.y}`,
-                  startPoint: { x: snappedX, y: ws.y },
-                  endPoint: { x: snappedX, y: we.y },
-                };
-              } else {
-                return {
-                  ...w,
-                  fromCompId: '',
-                  fromPinId: `loc_${ws.x}_${snappedY}`,
-                  toCompId: '',
-                  toPinId: `loc_${we.x}_${snappedY}`,
-                  startPoint: { x: ws.x, y: snappedY },
-                  endPoint: { x: we.x, y: snappedY },
-                };
-              }
-            }
-            // Stretch connected perpendicular wire endpoints that shared an endpoint with targetWire
-            const os = getWireStartPt(w);
-            const oe = getWireEndPt(w, os);
-            const sharesWsWithOs = os.x === ws.x && os.y === ws.y;
-            const sharesWeWithOs = os.x === we.x && os.y === we.y;
-            const sharesWsWithOe = oe.x === ws.x && oe.y === ws.y;
-            const sharesWeWithOe = oe.x === we.x && oe.y === we.y;
-
-            if (isPureVertical && os.y === oe.y) {
-              if (sharesWsWithOs || sharesWeWithOs) {
-                return { ...w, startPoint: { x: snappedX, y: os.y }, endPoint: oe };
-              }
-              if (sharesWsWithOe || sharesWeWithOe) {
-                return { ...w, startPoint: os, endPoint: { x: snappedX, y: oe.y } };
-              }
-            } else if (isPureHorizontal && os.x === oe.x) {
-              if (sharesWsWithOs || sharesWeWithOs) {
-                return { ...w, startPoint: { x: os.x, y: snappedY }, endPoint: oe };
-              }
-              if (sharesWsWithOe || sharesWeWithOe) {
-                return { ...w, startPoint: os, endPoint: { x: oe.x, y: snappedY } };
-              }
-            }
-            return w;
-          });
-        }
-
         return prev.map((w) => {
           if (w.id === activeDragJoint.wireId) {
             if (activeDragJoint.type === 'waypoint' && activeDragJoint.index !== undefined && w.waypoints) {
@@ -1392,15 +1353,27 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
     }
     wireDragStartRef.current = null;
     if (draggingWireJointRef.current || draggingWireJoint) {
+      const joint = draggingWireJointRef.current || draggingWireJoint;
       draggingWireJointRef.current = null;
       setDraggingWireJoint(null);
-      recordHistory();
-      setWires((prev) => {
-        const repaired = repairWires(prev, components);
+      const segStart = segmentDragStartRef.current;
+      segmentDragStartRef.current = null;
+      let finalWires = wires;
+      if (segStart && joint?.type === 'segment') {
+        // Use the release position: a quick flick can end before the last mousemove was rendered
+        const upPt = snapPt10(getCanvasCoords(e));
+        finalWires = moveWireSegment(segStart.wires, segStart.components, joint.wireId, upPt);
+        segStart.didMove = finalWires !== segStart.wires;
+      }
+      if (!segStart || segStart.didMove) {
+        // History must hold the state from before the drag (the live state is already moved)
+        if (segStart) recordHistory(segStart.components, segStart.wires);
+        else recordHistory();
+        const repaired = repairWires(finalWires, components);
         const sim = simulateCircuit(components, repaired);
         setComponents(sim.components);
-        return sim.wires;
-      });
+        setWires(sim.wires);
+      }
     }
     if (isPanning) {
       setIsPanning(false);
@@ -1460,8 +1433,8 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
         const enclosedComps = components
           .filter((c) => {
             const meta = COMPONENT_CATALOG[c.type];
-            const compW = meta?.width || (c.type === 'subcircuit' ? 130 : 60);
-            const compH = meta?.height || (c.type === 'subcircuit' ? 80 : 50);
+            const compW = meta?.width || (c.type === 'subcircuit' ? 120 : 60);
+            const compH = meta?.height || (c.type === 'subcircuit' ? Math.max(60, (Math.max(c.inputs.length, c.outputs.length) + 1) * 20) : 50);
             return (
               c.x + compW >= minX &&
               c.x <= maxX &&
@@ -2337,7 +2310,7 @@ ${wireXmls.join('\n')}
       return sim.wires;
     });
 
-    lastWireConnectedTimeRef.current = Date.now();
+    suppressPinClickRef.current = true;
     setWiringFrom(null);
   };
 
@@ -2355,7 +2328,9 @@ ${wireXmls.join('\n')}
   ) => {
     e.stopPropagation();
 
-    if (Date.now() - lastWireConnectedTimeRef.current < 250) {
+    // The mouseup of this same gesture already finished a wire on this pin
+    if (suppressPinClickRef.current) {
+      suppressPinClickRef.current = false;
       return;
     }
 
@@ -2390,9 +2365,6 @@ ${wireXmls.join('\n')}
     pin: CircuitPin
   ) => {
     e.stopPropagation();
-    if (Date.now() - lastWireConnectedTimeRef.current < 250) {
-      return;
-    }
     if (wiringFrom) {
       const startPt = snapPt10({ x: wiringFrom.x, y: wiringFrom.y });
       const endPt = snapPt10({ x: pin.x, y: pin.y });
@@ -2404,19 +2376,61 @@ ${wireXmls.join('\n')}
 
   // Add component from catalog to canvas
   const handleAddComponent = (type: ComponentType) => {
-    // Determine free spot near center or right
-    const posX = snapTo10(160 + (components.length % 5) * 40);
-    const posY = snapTo10(120 + (components.length % 4) * 50);
-
     recordHistory();
 
+    // Place the new part on free space inside the visible canvas: a part dropped onto another part or
+    // a wire would share pin locations with it and silently short those nets.
+    const compBox = (c: { type: ComponentType; x: number; y: number; inputs: CircuitPin[]; outputs: CircuitPin[]; rotation?: number }) => {
+      const meta = COMPONENT_CATALOG[c.type];
+      const w = meta?.width || 120;
+      const h = meta?.height || Math.max(60, (Math.max(c.inputs.length, c.outputs.length) + 1) * 20);
+      const quarterTurn = c.rotation === 90 || c.rotation === 270;
+      const cx = c.x + w / 2;
+      const cy = c.y + h / 2;
+      const hw = (quarterTurn ? h : w) / 2;
+      const hh = (quarterTurn ? w : h) / 2;
+      return { x0: cx - hw, y0: cy - hh, x1: cx + hw, y1: cy + hh };
+    };
+    const occupied = components.map(compBox);
+    const wireBoxes = wires
+      .filter((w) => w.startPoint && w.endPoint)
+      .map((w) => ({
+        x0: Math.min(w.startPoint!.x, w.endPoint!.x),
+        y0: Math.min(w.startPoint!.y, w.endPoint!.y),
+        x1: Math.max(w.startPoint!.x, w.endPoint!.x),
+        y1: Math.max(w.startPoint!.y, w.endPoint!.y),
+      }));
+    const probe = updatePinPositions(createComponentInstance(type, 0, 0));
+    const size = compBox(probe);
+    const MARGIN = 30;
+    const viewW = (svgRef.current?.clientWidth || 900) / zoom;
+    const viewH = (svgRef.current?.clientHeight || 560) / zoom;
+    const viewX0 = snapTo10(Math.max(10, -panOffset.x / zoom + 40));
+    const viewY0 = snapTo10(Math.max(10, -panOffset.y / zoom + 40));
+    const isFree = (x: number, y: number) => {
+      const b = { x0: x - MARGIN, y0: y - MARGIN, x1: x + size.x1 + MARGIN, y1: y + size.y1 + MARGIN };
+      const hits = (o: { x0: number; y0: number; x1: number; y1: number }) =>
+        o.x0 <= b.x1 && o.x1 >= b.x0 && o.y0 <= b.y1 && o.y1 >= b.y0;
+      return !occupied.some(hits) && !wireBoxes.some(hits);
+    };
+    // Fallback when the view is full: just below everything on the sheet
+    let posX = viewX0;
+    let posY = snapTo10(Math.max(viewY0, ...occupied.map((o) => o.y1 + 40), ...wireBoxes.map((o) => o.y1 + 40)));
+    search: for (let y = viewY0; y < viewY0 + Math.max(200, viewH - size.y1 - 40); y += 20) {
+      for (let x = viewX0; x < viewX0 + Math.max(200, viewW - size.x1 - 40); x += 20) {
+        if (isFree(x, y)) {
+          posX = x;
+          posY = y;
+          break search;
+        }
+      }
+    }
+
     const newComp = updatePinPositions(createComponentInstance(type, posX, posY));
-    setComponents((prev) => {
-      const updated = [...prev, newComp];
-      const sim = simulateCircuit(updated, wires);
-      setWires(sim.wires);
-      return sim.components;
-    });
+    const updated = [...components, newComp];
+    const sim = simulateCircuit(updated, repairWires(wires, updated));
+    setComponents(sim.components);
+    setWires(sim.wires);
     setSelectedCompId(newComp.id);
     setSelectedWireId(null);
   };
@@ -2444,66 +2458,30 @@ ${wireXmls.join('\n')}
   const handleRotateSelected = useCallback(() => {
     if (selectedCompIds.length === 0) return;
     recordHistory();
-    setComponents((prev) => {
-      // Map old pin positions for selected components before rotating
-      const oldPinMap = new Map<string, { x: number; y: number; pinId: string; compId: string }>();
-      for (const c of prev) {
-        if (selectedCompIds.includes(c.id)) {
-          for (const p of [...c.inputs, ...c.outputs]) {
-            const sp = snapPt10(p);
-            oldPinMap.set(p.id, { x: sp.x, y: sp.y, pinId: p.id, compId: c.id });
-          }
-        }
+
+    const rotatedComps = components.map((c) => {
+      if (selectedCompIds.includes(c.id)) {
+        const nextRot = (((c.rotation || 0) + 90) % 360) as 0 | 90 | 180 | 270;
+        return updatePinPositions({ ...c, rotation: nextRot });
       }
-
-      const rotatedComps = prev.map((c) => {
-        if (selectedCompIds.includes(c.id)) {
-          const nextRot = (((c.rotation || 0) + 90) % 360) as 0 | 90 | 180 | 270;
-          return updatePinPositions({ ...c, rotation: nextRot });
-        }
-        return c;
-      });
-
-      setWires((prevWires) => {
-        const updatedWires: CircuitWire[] = prevWires.map((wire) => {
-          let modified = { ...wire };
-          const sPt = wire.startPoint ? snapPt10(wire.startPoint) : null;
-          const ePt = wire.endPoint ? snapPt10(wire.endPoint) : null;
-
-          for (const [pinId, oldPin] of oldPinMap) {
-            if (
-              (wire.fromCompId === oldPin.compId && wire.fromPinId === pinId) ||
-              (sPt && sPt.x === oldPin.x && sPt.y === oldPin.y)
-            ) {
-              modified.fromCompId = oldPin.compId;
-              modified.fromPinId = pinId;
-              modified.startPoint = undefined;
-              break;
-            }
-          }
-
-          for (const [pinId, oldPin] of oldPinMap) {
-            if (
-              (wire.toCompId === oldPin.compId && wire.toPinId === pinId) ||
-              (ePt && ePt.x === oldPin.x && ePt.y === oldPin.y)
-            ) {
-              modified.toCompId = oldPin.compId;
-              modified.toPinId = pinId;
-              modified.endPoint = undefined;
-              break;
-            }
-          }
-
-          return modified;
-        });
-
-        const repaired = repairWires(updatedWires, rotatedComps);
-        const sim = simulateCircuit(rotatedComps, repaired);
-        return sim.wires;
-      });
-      return rotatedComps;
+      return c;
     });
-  }, [selectedCompIds, recordHistory]);
+
+    // Every pin keeps its id; wire chains ending on a rotated pin are re-routed to its new location
+    const pinRemap = new Map<string, string | null>();
+    for (const c of components) {
+      if (!selectedCompIds.includes(c.id)) continue;
+      for (const p of [...c.inputs, ...c.outputs]) {
+        const sp = snapPt10(p);
+        pinRemap.set(`${sp.x},${sp.y}`, p.id);
+      }
+    }
+
+    const rerouted = rerouteWiresToRemappedPins(wires, components, rotatedComps, pinRemap);
+    const sim = simulateCircuit(rotatedComps, rerouted);
+    setComponents(sim.components);
+    setWires(sim.wires);
+  }, [selectedCompIds, recordHistory, components, wires]);
 
   // Duplicate selected components and any interconnecting wires
   const handleDuplicateSelected = useCallback(() => {
@@ -2901,202 +2879,15 @@ ${wireXmls.join('\n')}
         }
       }
 
-      // 5. Clone wire list and apply orthogonal adjustments
-      const wireMap = new Map<string, CircuitWire>();
-      normalizedWires.forEach((w) => {
-        wireMap.set(w.id, {
-          ...w,
-          startPoint: w.startPoint ? { ...w.startPoint } : undefined,
-          endPoint: w.endPoint ? { ...w.endPoint } : undefined,
-        });
+      // 5. Re-attach the wires: chains on a pin that moved are re-routed to its new location (net-aware and
+      // around component bodies, like a component move; hand-made jogs could overlap neighbouring wires and
+      // short them). Wires of a removed pin stay as open wire ends, like in Logisim.
+      const pinRemap = new Map<string, string | null>();
+      oldPinLocations.forEach((loc, i) => {
+        pinRemap.set(`${loc.x},${loc.y}`, targetMap.get(i)?.id ?? null);
       });
-
-      const additionalWires: CircuitWire[] = [];
-
-      for (const att of attachments) {
-        const w = wireMap.get(att.wireId);
-        if (!w || !w.startPoint || !w.endPoint) continue;
-
-        const targetPin = targetMap.get(att.oldIdx);
-        if (!targetPin) {
-          // Unmapped wire (e.g. 3rd wire when reduced from 3 to 2 inputs):
-          // NEVER DELETE! Preserve wire exactly as-is on canvas as a floating wire like Logisim
-          if (att.end === 'end') {
-            w.toCompId = '';
-            w.toPinId = 'loc_' + w.endPoint.x + '_' + w.endPoint.y;
-          } else {
-            w.fromCompId = '';
-            w.fromPinId = 'loc_' + w.startPoint.x + '_' + w.startPoint.y;
-          }
-          continue;
-        }
-
-        const oldPt = oldPinLocations[att.oldIdx];
-        const newPt = snapPt10({ x: targetPin.x, y: targetPin.y });
-        const dx = newPt.x - oldPt.x;
-        const dy = newPt.y - oldPt.y;
-
-        if (att.end === 'end') {
-          w.toCompId = compId;
-          w.toPinId = targetPin.id;
-
-          if (dy !== 0 || dx !== 0) {
-            const startPt = snapPt10(w.startPoint);
-            if (dy !== 0 && startPt.y === oldPt.y && startPt.x !== newPt.x) {
-              const dist = Math.abs(newPt.x - startPt.x);
-              const cornerX = dist >= 30 ? (startPt.x < newPt.x ? newPt.x - 20 : newPt.x + 20) : startPt.x;
-              if (cornerX !== startPt.x) {
-                additionalWires.push({
-                  id: 'w_jog1_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-                  fromCompId: w.fromCompId,
-                  fromPinId: w.fromPinId,
-                  toCompId: '',
-                  toPinId: 'loc_' + cornerX + '_' + oldPt.y,
-                  startPoint: { ...w.startPoint },
-                  endPoint: { x: cornerX, y: oldPt.y },
-                  value: w.value,
-                  isBus: w.isBus,
-                  bitWidth: w.bitWidth,
-                });
-              }
-              additionalWires.push({
-                id: 'w_jog2_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-                fromCompId: cornerX === startPt.x ? w.fromCompId : '',
-                fromPinId: cornerX === startPt.x ? w.fromPinId : 'loc_' + cornerX + '_' + oldPt.y,
-                toCompId: '',
-                toPinId: 'loc_' + cornerX + '_' + newPt.y,
-                startPoint: { x: cornerX, y: oldPt.y },
-                endPoint: { x: cornerX, y: newPt.y },
-                value: w.value,
-                isBus: w.isBus,
-                bitWidth: w.bitWidth,
-              });
-              w.startPoint = { x: cornerX, y: newPt.y };
-              w.endPoint = { x: newPt.x, y: newPt.y };
-              w.fromCompId = '';
-              w.fromPinId = 'loc_' + cornerX + '_' + newPt.y;
-            } else if (dx !== 0 && startPt.x === oldPt.x && startPt.y !== newPt.y) {
-              const dist = Math.abs(newPt.y - startPt.y);
-              const cornerY = dist >= 30 ? (startPt.y < newPt.y ? newPt.y - 20 : newPt.y + 20) : startPt.y;
-              if (cornerY !== startPt.y) {
-                additionalWires.push({
-                  id: 'w_jog1_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-                  fromCompId: w.fromCompId,
-                  fromPinId: w.fromPinId,
-                  toCompId: '',
-                  toPinId: 'loc_' + oldPt.x + '_' + cornerY,
-                  startPoint: { ...w.startPoint },
-                  endPoint: { x: oldPt.x, y: cornerY },
-                  value: w.value,
-                  isBus: w.isBus,
-                  bitWidth: w.bitWidth,
-                });
-              }
-              additionalWires.push({
-                id: 'w_jog2_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-                fromCompId: cornerY === startPt.y ? w.fromCompId : '',
-                fromPinId: cornerY === startPt.y ? w.fromPinId : 'loc_' + oldPt.x + '_' + cornerY,
-                toCompId: '',
-                toPinId: 'loc_' + newPt.x + '_' + cornerY,
-                startPoint: { x: oldPt.x, y: cornerY },
-                endPoint: { x: newPt.x, y: cornerY },
-                value: w.value,
-                isBus: w.isBus,
-                bitWidth: w.bitWidth,
-              });
-              w.startPoint = { x: newPt.x, y: cornerY };
-              w.endPoint = { x: newPt.x, y: newPt.y };
-              w.fromCompId = '';
-              w.fromPinId = 'loc_' + newPt.x + '_' + cornerY;
-            } else {
-              w.endPoint = { x: newPt.x, y: newPt.y };
-            }
-          }
-        } else {
-          // att.end === 'start'
-          w.fromCompId = compId;
-          w.fromPinId = targetPin.id;
-
-          if (dy !== 0 || dx !== 0) {
-            const endPt = snapPt10(w.endPoint);
-            if (dy !== 0 && endPt.y === oldPt.y && endPt.x !== newPt.x) {
-              const dist = Math.abs(endPt.x - newPt.x);
-              const cornerX = dist >= 30 ? (newPt.x < endPt.x ? newPt.x + 20 : newPt.x - 20) : endPt.x;
-              additionalWires.push({
-                id: 'w_jog2_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-                fromCompId: '',
-                fromPinId: 'loc_' + cornerX + '_' + newPt.y,
-                toCompId: cornerX === endPt.x ? w.toCompId : '',
-                toPinId: cornerX === endPt.x ? w.toPinId : 'loc_' + cornerX + '_' + oldPt.y,
-                startPoint: { x: cornerX, y: newPt.y },
-                endPoint: { x: cornerX, y: oldPt.y },
-                value: w.value,
-                isBus: w.isBus,
-                bitWidth: w.bitWidth,
-              });
-              if (cornerX !== endPt.x) {
-                additionalWires.push({
-                  id: 'w_jog1_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-                  fromCompId: '',
-                  fromPinId: 'loc_' + cornerX + '_' + oldPt.y,
-                  toCompId: w.toCompId,
-                  toPinId: w.toPinId,
-                  startPoint: { x: cornerX, y: oldPt.y },
-                  endPoint: { ...w.endPoint },
-                  value: w.value,
-                  isBus: w.isBus,
-                  bitWidth: w.bitWidth,
-                });
-              }
-              w.startPoint = { x: newPt.x, y: newPt.y };
-              w.endPoint = { x: cornerX, y: newPt.y };
-              w.toCompId = '';
-              w.toPinId = 'loc_' + cornerX + '_' + newPt.y;
-            } else if (dx !== 0 && endPt.x === oldPt.x && endPt.y !== newPt.y) {
-              const dist = Math.abs(endPt.y - newPt.y);
-              const cornerY = dist >= 30 ? (newPt.y < endPt.y ? newPt.y + 20 : newPt.y - 20) : endPt.y;
-              additionalWires.push({
-                id: 'w_jog2_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-                fromCompId: '',
-                fromPinId: 'loc_' + newPt.x + '_' + cornerY,
-                toCompId: cornerY === endPt.y ? w.toCompId : '',
-                toPinId: cornerY === endPt.y ? w.toPinId : 'loc_' + oldPt.x + '_' + cornerY,
-                startPoint: { x: newPt.x, y: cornerY },
-                endPoint: { x: oldPt.x, y: cornerY },
-                value: w.value,
-                isBus: w.isBus,
-                bitWidth: w.bitWidth,
-              });
-              if (cornerY !== endPt.y) {
-                additionalWires.push({
-                  id: 'w_jog1_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-                  fromCompId: '',
-                  fromPinId: 'loc_' + oldPt.x + '_' + cornerY,
-                  toCompId: w.toCompId,
-                  toPinId: w.toPinId,
-                  startPoint: { x: oldPt.x, y: cornerY },
-                  endPoint: { ...w.endPoint },
-                  value: w.value,
-                  isBus: w.isBus,
-                  bitWidth: w.bitWidth,
-                });
-              }
-              w.startPoint = { x: newPt.x, y: newPt.y };
-              w.endPoint = { x: newPt.x, y: cornerY };
-              w.toCompId = '';
-              w.toPinId = 'loc_' + newPt.x + '_' + cornerY;
-            } else {
-              w.startPoint = { x: newPt.x, y: newPt.y };
-            }
-          }
-        }
-      }
-
-      const allWires = [...Array.from(wireMap.values()), ...additionalWires];
-
-      // 6. Update component list and repair wires to normalize segments and junctions
       const nextComps = components.map((c) => (c.id === compId ? updatedComp : c));
-      const repaired = repairWires(allWires, nextComps);
+      const repaired = rerouteWiresToRemappedPins(normalizedWires, components, nextComps, pinRemap);
       const sim = simulateCircuit(nextComps, repaired);
 
       setWires(sim.wires);
@@ -3730,8 +3521,8 @@ ${wireXmls.join('\n')}
       case 'and': {
         return (
           <g filter="url(#gateShadow)">
-            {comp.inputs.map((pin) => {
-              const relY = pin.y - comp.y;
+            {comp.inputs.map((pin, idx) => {
+              const relY = getMultiInputGatePinRelY(comp.inputs.length, idx, COMPONENT_CATALOG[comp.type].height);
               return <line key={pin.id} x1={0} y1={relY} x2={12} y2={relY} stroke="#64748b" strokeWidth={2} />;
             })}
             <path
@@ -3751,8 +3542,8 @@ ${wireXmls.join('\n')}
       case 'or': {
         return (
           <g filter="url(#gateShadow)">
-            {comp.inputs.map((pin) => {
-              const relY = pin.y - comp.y;
+            {comp.inputs.map((pin, idx) => {
+              const relY = getMultiInputGatePinRelY(comp.inputs.length, idx, COMPONENT_CATALOG[comp.type].height);
               return <line key={pin.id} x1={0} y1={relY} x2={14} y2={relY} stroke="#64748b" strokeWidth={2} />;
             })}
             <path
@@ -3772,8 +3563,8 @@ ${wireXmls.join('\n')}
       case 'nand': {
         return (
           <g filter="url(#gateShadow)">
-            {comp.inputs.map((pin) => {
-              const relY = pin.y - comp.y;
+            {comp.inputs.map((pin, idx) => {
+              const relY = getMultiInputGatePinRelY(comp.inputs.length, idx, COMPONENT_CATALOG[comp.type].height);
               return <line key={pin.id} x1={0} y1={relY} x2={12} y2={relY} stroke="#64748b" strokeWidth={2} />;
             })}
             <path
@@ -3794,8 +3585,8 @@ ${wireXmls.join('\n')}
       case 'nor': {
         return (
           <g filter="url(#gateShadow)">
-            {comp.inputs.map((pin) => {
-              const relY = pin.y - comp.y;
+            {comp.inputs.map((pin, idx) => {
+              const relY = getMultiInputGatePinRelY(comp.inputs.length, idx, COMPONENT_CATALOG[comp.type].height);
               return <line key={pin.id} x1={0} y1={relY} x2={14} y2={relY} stroke="#64748b" strokeWidth={2} />;
             })}
             <path
@@ -3816,8 +3607,8 @@ ${wireXmls.join('\n')}
       case 'xor': {
         return (
           <g filter="url(#gateShadow)">
-            {comp.inputs.map((pin) => {
-              const relY = pin.y - comp.y;
+            {comp.inputs.map((pin, idx) => {
+              const relY = getMultiInputGatePinRelY(comp.inputs.length, idx, COMPONENT_CATALOG[comp.type].height);
               return <line key={pin.id} x1={0} y1={relY} x2={10} y2={relY} stroke="#64748b" strokeWidth={2} />;
             })}
             <path
@@ -3843,8 +3634,8 @@ ${wireXmls.join('\n')}
       case 'xnor': {
         return (
           <g filter="url(#gateShadow)">
-            {comp.inputs.map((pin) => {
-              const relY = pin.y - comp.y;
+            {comp.inputs.map((pin, idx) => {
+              const relY = getMultiInputGatePinRelY(comp.inputs.length, idx, COMPONENT_CATALOG[comp.type].height);
               return <line key={pin.id} x1={0} y1={relY} x2={10} y2={relY} stroke="#64748b" strokeWidth={2} />;
             })}
             <path d="M 6,10 Q 20,30 6,50" fill="none" stroke={strokeColor} strokeWidth={strokeWidth} />
@@ -4364,18 +4155,18 @@ ${wireXmls.join('\n')}
       }
 
       case 'subcircuit': {
-        const chipWidth = 130;
+        const chipWidth = 120;
         const inCount = comp.inputs.length;
         const outCount = comp.outputs.length;
-        const chipHeight = Math.max(76, (Math.max(inCount, outCount) + 1) * 22);
+        const chipHeight = Math.max(60, (Math.max(inCount, outCount) + 1) * 20);
         const code = comp.state.subcircuitCode || 'IC-CUSTOM';
         const name = (comp.state.subcircuitName || comp.label || 'Özel Alt Devre').toUpperCase();
 
         return (
           <g filter="url(#gateShadow)">
-            {/* Left and Right IC Pin Legs with signal labels */}
-            {comp.inputs.map((pin) => {
-              const relY = pin.y - comp.y;
+            {/* Left and Right IC Pin Legs with signal labels (in local unrotated frame) */}
+            {comp.inputs.map((pin, idx) => {
+              const relY = 20 * (idx + 1);
               return (
                 <g key={pin.id}>
                   <rect x={-8} y={relY - 3} width={8} height={6} rx={1} fill="url(#icPin)" stroke="#64748b" strokeWidth={0.5} />
@@ -4385,8 +4176,8 @@ ${wireXmls.join('\n')}
                 </g>
               );
             })}
-            {comp.outputs.map((pin) => {
-              const relY = pin.y - comp.y;
+            {comp.outputs.map((pin, idx) => {
+              const relY = 20 * (idx + 1);
               return (
                 <g key={pin.id}>
                   <rect x={chipWidth} y={relY - 3} width={8} height={6} rx={1} fill="url(#icPin)" stroke="#64748b" strokeWidth={0.5} />
@@ -8837,6 +8628,7 @@ ${wireXmls.join('\n')}
                         onMouseDown={(e) => {
                           e.stopPropagation();
                           e.preventDefault();
+                          segmentDragStartRef.current = { components, wires, didMove: false };
                           draggingWireJointRef.current = { wireId: wire.id, type: 'segment' };
                           setDraggingWireJoint({ wireId: wire.id, type: 'segment' });
                         }}
@@ -9051,6 +8843,8 @@ ${wireXmls.join('\n')}
             {components.map((comp) => {
               const meta = COMPONENT_CATALOG[comp.type];
               const isSelected = selectedCompIds.includes(comp.id);
+              const compW = comp.type === 'subcircuit' ? 120 : meta.width;
+              const compH = comp.type === 'subcircuit' ? Math.max(60, (Math.max(comp.inputs.length, comp.outputs.length) + 1) * 20) : meta.height;
 
               return (
                 <g
@@ -9078,32 +8872,33 @@ ${wireXmls.join('\n')}
                     <rect
                       x={-6}
                       y={-6}
-                      width={meta.width + 12}
-                      height={meta.height + 12}
+                      width={compW + 12}
+                      height={compH + 12}
                       rx={14}
                       fill="none"
                       stroke="#3b82f6"
                       strokeWidth={1.5}
                       strokeDasharray="4,4"
+                      transform={comp.rotation ? `rotate(${comp.rotation}, ${compW / 2}, ${compH / 2})` : undefined}
                       className="pointer-events-none"
                     />
                   )}
 
                   {/* Component Shape Body with Rotation */}
-                  <g transform={comp.rotation ? `rotate(${comp.rotation}, ${meta.width / 2}, ${meta.height / 2})` : undefined}>
+                  <g transform={comp.rotation ? `rotate(${comp.rotation}, ${compW / 2}, ${compH / 2})` : undefined}>
                     {renderGateBody(comp)}
                   </g>
 
                   {/* Component Label Text with Alignment (Top, Bottom, Center, Hidden) */}
                   {comp.label && comp.state.labelPos !== 'hidden' && (
                     <text
-                      x={meta.width / 2}
+                      x={compW / 2}
                       y={
                         comp.state.labelPos === 'top'
                           ? -10
                           : comp.state.labelPos === 'center'
-                          ? meta.height / 2 + 4
-                          : meta.height + 16
+                          ? compH / 2 + 4
+                          : compH + 16
                       }
                       textAnchor="middle"
                       className="text-[10px] font-sans font-semibold fill-slate-500 select-none pointer-events-none"
@@ -9133,9 +8928,7 @@ ${wireXmls.join('\n')}
                         transform={`translate(${pin.x - comp.x}, ${pin.y - comp.y})`}
                         onMouseDown={(e) => {
                           e.stopPropagation();
-                          if (Date.now() - lastWireConnectedTimeRef.current < 250) {
-                            return;
-                          }
+                          suppressPinClickRef.current = false;
                           if (!wiringFrom && e.button === 0) {
                             const snappedPin = snapPt10({ x: pin.x, y: pin.y });
                             wiringStartTimeRef.current = Date.now();
@@ -9214,9 +9007,7 @@ ${wireXmls.join('\n')}
                         transform={`translate(${pin.x - comp.x}, ${pin.y - comp.y})`}
                         onMouseDown={(e) => {
                           e.stopPropagation();
-                          if (Date.now() - lastWireConnectedTimeRef.current < 250) {
-                            return;
-                          }
+                          suppressPinClickRef.current = false;
                           if (!wiringFrom && e.button === 0) {
                             const snappedPin = snapPt10({ x: pin.x, y: pin.y });
                             wiringStartTimeRef.current = Date.now();
