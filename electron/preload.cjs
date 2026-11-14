@@ -22,3 +22,9 @@ contextBridge.exposeInMainWorld('ldsNet', {
   getLan: () => ipcRenderer.invoke('lds-net:get-lan'),
   setLan: (on) => ipcRenderer.invoke('lds-net:set-lan', on === true),
 });
+
+// Chronogram log file (logging step c): see src/components/useChronoLogFile.ts and electron/main.cjs
+contextBridge.exposeInMainWorld('ldsLog', {
+  choose: (suggestedName) => ipcRenderer.invoke('lds-log:choose', String(suggestedName ?? '')),
+  append: (file, text) => ipcRenderer.invoke('lds-log:append', String(file), String(text)),
+});

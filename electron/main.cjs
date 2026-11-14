@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
 const path = require('path');
 
 const fs = require('fs');
@@ -60,6 +60,66 @@ ipcMain.handle('lds-net:set-lan', (e, on) => {
   const lan = telnet.setLan(on === true);
   writeSettings({ telnetLan: lan });
   return lan;
+});
+
+// Chronogram log file (logging step c), after evolution's FilePanel + LogThread: the page picks a file through a save
+// dialog (an existing non-empty file: overwrite / append / cancel) and appends text to it. Only files picked in this
+// run can be written.
+const logFiles = new Set();
+ipcMain.handle('lds-log:choose', async (e, suggestedName) => {
+  if (!fromPage(e)) return null;
+  const r = await dialog.showSaveDialog(mainWindow, {
+    title: 'Kayıt dosyası',
+    defaultPath: typeof suggestedName === 'string' && suggestedName ? suggestedName : 'log.txt',
+    filters: [
+      { name: 'Metin dosyası (*.txt)', extensions: ['txt'] },
+      { name: 'Tüm dosyalar', extensions: ['*'] },
+    ],
+  });
+  if (r.canceled || !r.filePath) return null;
+  const file = r.filePath;
+  let stat = null;
+  try {
+    stat = fs.statSync(file);
+  } catch {
+    /* a new file */
+  }
+  if (stat && stat.isDirectory()) return { error: `“${path.basename(file)}” bir klasör.` };
+  if (stat && stat.size > 0) {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'question',
+      title: 'Dosya zaten var',
+      message: `“${path.basename(file)}” dosyası zaten var.`,
+      buttons: ['Üzerine yaz', 'Sona ekle', 'İptal'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+    });
+    if (response === 2) return null;
+    if (response === 0) {
+      try {
+        fs.writeFileSync(file, '');
+      } catch {
+        return { error: `“${path.basename(file)}” dosyasına yazma izniniz yok.` };
+      }
+    }
+  }
+  try {
+    fs.appendFileSync(file, '');
+  } catch {
+    return { error: `“${path.basename(file)}” dosyasına yazma izniniz yok.` };
+  }
+  logFiles.add(file);
+  return { path: file };
+});
+ipcMain.handle('lds-log:append', async (e, file, text) => {
+  if (!fromPage(e) || !logFiles.has(file) || typeof text !== 'string') return false;
+  try {
+    await fs.promises.appendFile(file, text, 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
 });
 
 function createWindow() {
