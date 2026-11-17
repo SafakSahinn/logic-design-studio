@@ -28,3 +28,29 @@ contextBridge.exposeInMainWorld('ldsLog', {
   choose: (suggestedName) => ipcRenderer.invoke('lds-log:choose', String(suggestedName ?? '')),
   append: (file, text) => ipcRenderer.invoke('lds-log:append', String(file), String(text)),
 });
+
+// External EDA tools (Aşama 6.0c): see src/tools/nativeBackend.ts and electron/toolRunner.cjs.
+// Only plain data crosses: strings, string arrays, and file maps of string or Uint8Array.
+const plainFiles = (files) => {
+  const out = {};
+  if (files && typeof files === 'object') {
+    for (const [name, data] of Object.entries(files)) {
+      out[String(name)] = data instanceof Uint8Array ? new Uint8Array(data) : String(data);
+    }
+  }
+  return out;
+};
+contextBridge.exposeInMainWorld('ldsTool', {
+  probe: (tool) => ipcRenderer.invoke('lds-tool:probe', String(tool)),
+  run: (req) =>
+    ipcRenderer.invoke('lds-tool:run', {
+      runId: String(req && req.runId),
+      tool: String(req && req.tool),
+      args: Array.isArray(req && req.args) ? req.args.map(String) : [],
+      files: plainFiles(req && req.files),
+      outputs: Array.isArray(req && req.outputs) ? req.outputs.map(String) : [],
+      timeoutMs: Number(req && req.timeoutMs) || 0,
+    }),
+  cancel: (runId) => ipcRenderer.invoke('lds-tool:cancel', String(runId)),
+  onProgress: listen('lds-tool:progress', (cb, p) => cb(p.runId, p.progress)),
+});

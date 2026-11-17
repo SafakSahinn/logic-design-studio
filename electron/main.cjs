@@ -1,8 +1,10 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
 const path = require('path');
+const { pathToFileURL } = require('url');
 
 const fs = require('fs');
 const { createTelnetHub } = require('./telnetServer.cjs');
+const { createToolRunner } = require('./toolRunner.cjs');
 const distHtml = path.join(__dirname, '../dist/index.html');
 const isDev = process.env.NODE_ENV === 'development' || (!app.isPackaged && !fs.existsSync(distHtml));
 
@@ -11,6 +13,16 @@ app.commandLine.appendSwitch('high-dpi-support', '1');
 app.commandLine.appendSwitch('force-device-scale-factor', '1');
 
 let mainWindow = null;
+
+// The window shows only the app itself. Any other URL (a link, a redirect, injected script) would inherit the
+// preload bridges, so navigation away and new windows are refused.
+const DEV_URL = 'http://localhost:5173';
+const appFileUrl = pathToFileURL(distHtml).href;
+function isAppUrl(url) {
+  if (typeof url !== 'string') return false;
+  if (isDev) return url === DEV_URL || url.startsWith(`${DEV_URL}/`);
+  return url === appFileUrl || url.startsWith(`${appFileUrl}#`) || url.startsWith(`${appFileUrl}?`);
+}
 
 // App-wide settings (not part of any circuit file): userData/lds-settings.json
 const settingsFile = () => path.join(app.getPath('userData'), 'lds-settings.json');
@@ -43,7 +55,10 @@ const telnet = createTelnetHub({
 const fromPage = (e) => mainWindow && e.sender === mainWindow.webContents;
 ipcMain.on('lds-net:hello', (e) => {
   // a (re)loaded page starts without parts: servers held by the previous page are released
-  if (fromPage(e)) telnet.closeAll();
+  if (fromPage(e)) {
+    telnet.closeAll();
+    tools.cancelAll();
+  }
 });
 ipcMain.on('lds-net:open', (e, msg) => {
   if (fromPage(e) && msg) telnet.open(msg.id, msg.port, msg.telnetMode);
@@ -122,6 +137,18 @@ ipcMain.handle('lds-log:append', async (e, file, text) => {
   }
 });
 
+// External EDA tools (Aşama 6.0c): see electron/toolRunner.cjs (allowlist, temp dir, limits) and src/tools/.
+// The page names a tool id; this process alone maps it to an executable.
+const tools = createToolRunner({
+  readSettings,
+  onProgress: (runId, progress) => toPage('lds-tool:progress', { runId, progress }),
+});
+// Tool requests are accepted only from the app's own top-level page, never from an iframe or a foreign URL.
+const fromAppFrame = (e) => fromPage(e) && e.senderFrame === mainWindow.webContents.mainFrame && isAppUrl(e.senderFrame.url);
+ipcMain.handle('lds-tool:probe', (e, tool) => (fromAppFrame(e) ? tools.probe(String(tool)) : { available: false, reason: 'not-installed' }));
+ipcMain.handle('lds-tool:run', (e, req) => (fromAppFrame(e) ? tools.run(req) : { error: { kind: 'bad-request', message: 'Not from the app page' } }));
+ipcMain.handle('lds-tool:cancel', (e, runId) => (fromAppFrame(e) ? tools.cancel(String(runId)) : false));
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -140,6 +167,14 @@ function createWindow() {
     },
   });
 
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!isAppUrl(url)) event.preventDefault();
+  });
+  mainWindow.webContents.on('will-redirect', (event, url) => {
+    if (!isAppUrl(url)) event.preventDefault();
+  });
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
   // Remove default menu bar for modern clean CAD ribbon UI
   Menu.setApplicationMenu(null);
 
@@ -150,13 +185,14 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     telnet.closeAll();
+    tools.cancelAll();
     mainWindow = null;
   });
 
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173');
+    mainWindow.loadURL(DEV_URL);
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    mainWindow.loadFile(distHtml);
   }
 }
 
@@ -173,6 +209,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   telnet.closeAll();
+  tools.cancelAll();
   if (process.platform !== 'darwin') {
     app.quit();
   }
