@@ -102,6 +102,8 @@ const YOSYS_INPUT_EXT = /\.(v|sv|vh|svh|il|rtlil|json|blif|lib|aig|ys)$/i;
  * that yosys sees.
  */
 function yosysCommands(script) {
+  // Control characters are matched on purpose: yosys may treat them as separators where this lexer would not.
+  // oxlint-disable-next-line no-control-regex
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(script)) throw new Error('control characters are not allowed');
   if (/["\\`]/.test(script)) throw new Error('quotes and backslashes are not allowed');
   const commands = [];
