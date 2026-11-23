@@ -286,6 +286,91 @@ const ECPPACK = {
   positional: true,
 };
 
+// --- openFPGALoader ---------------------------------------------------------------------------------
+
+/**
+ * openFPGALoader writes a bitstream to a board. Allowed: choosing the cable or board, SRAM or flash, detecting the
+ * chain, listing, and one bitstream that the page sent as an input file. Refused because they write files, touch
+ * flash beyond a plain write, reach the network or load other code: --dump-flash (writes a file), --bulk-erase,
+ * --protect-flash / --unprotect-flash, -o / --offset, --flash-sector, --target-flash, --external-flash,
+ * --enable-quad / --disable-quad, --file-type, --ip / --port (remote cables), -d / --device (a device path),
+ * --pins, --probe-firmware, --mcufw, --user-flash, --secondary-bitstream, --misc-device, -B / --bridge,
+ * --skip-load-bridge, --spi, --dfu and the rest. A flash write additionally needs the user's yes in the main process
+ * (confirmationFor below). That decision must not depend on anything but -f, so:
+ *   - only .bit files are accepted: an .svf file is a raw JTAG script that can erase and write the flash by itself;
+ *   - a run with a bitstream must say -m (SRAM) or -f (flash) explicitly: some boards write flash by default;
+ *   - -b names only boards listed in LOADER_BOARDS (mirrors src/fpga/flow/program.ts), for the same reason.
+ */
+const OPENFPGALOADER = {
+  flags: new Set(['-h', '--help', '-V', '--version', '--Version', '-v', '--verbose', '--quiet', '-f', '--write-flash', '-m',
+    '--write-sram', '--detect', '--verify', '-r', '--reset', '--skip-reset', '--list-boards', '--list-cables', '--list-fpga',
+    '--scan-usb', '--invert-read-edge']),
+  plain: new Set(['-b', '--board', '-c', '--cable', '--freq', '--cable-index', '--ftdi-channel', '--index-chain', '--fpga-part',
+    '--vid', '--pid', '--usb-serial-num', '--verbose-level']),
+  paths: new Set(['--bitstream']),
+  positional: true,
+};
+const OPENFPGALOADER_FLASH = new Set(['-f', '--write-flash']);
+// Board, cable and part names ("ecp5_evn", "ft2232", "LFE5U-85F-6BG381C"), numbers ("6000000", "0x0403") and serials
+const LOADER_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$/;
+const BITSTREAM_EXT = /\.bit$/i;
+const OPENFPGALOADER_SRAM = new Set(['-m', '--write-sram']);
+// openFPGALoader board names the app may pass with -b / --board (none yet: GECKO5 uses the default cable)
+const LOADER_BOARDS = new Set([]);
+
+/** The bitstream files of an openFPGALoader command line (positional or --bitstream) */
+function loaderBitstreams(args) {
+  const found = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--bitstream') found.push(args[++i]);
+    else if (arg.startsWith('--bitstream=')) found.push(arg.slice('--bitstream='.length));
+    else if (OPENFPGALOADER.plain.has(arg)) i++;
+    else if (!arg.startsWith('-')) found.push(arg);
+  }
+  return found;
+}
+
+function checkOpenFpgaLoader(args, files) {
+  const r = checkOptionLine('openFPGALoader', args, OPENFPGALOADER);
+  if (!r.ok) return r;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    const eq = arg.startsWith('--') ? arg.indexOf('=') : -1;
+    const name = eq > 0 ? arg.slice(0, eq) : arg;
+    if (!OPENFPGALOADER.plain.has(name)) continue;
+    const value = eq > 0 ? arg.slice(eq + 1) : args[++i];
+    if (!LOADER_VALUE.test(value)) return deny(`${name}: expects a plain name or number`);
+    if ((name === '-b' || name === '--board') && !LOADER_BOARDS.has(value)) return deny(`${name} ${value}: this board is not allowed`);
+  }
+  const bitstreams = loaderBitstreams(args);
+  if (bitstreams.length > 1) return deny('openFPGALoader takes one bitstream');
+  for (const b of bitstreams) {
+    if (!BITSTREAM_EXT.test(b)) return deny(`bitstream ${b}: this file type is not allowed`);
+    // Only a file the page sent: the tool reads nothing else from the run folder
+    if (!files || !Object.prototype.hasOwnProperty.call(files, b)) return deny(`bitstream ${b}: not one of the input files`);
+  }
+  const flash = args.some((a) => OPENFPGALOADER_FLASH.has(a));
+  const sram = args.some((a) => OPENFPGALOADER_SRAM.has(a));
+  if (flash && sram) return deny('choose either -m (SRAM) or -f (flash)');
+  if (bitstreams.length > 0 && !flash && !sram) return deny('a bitstream needs -m (SRAM) or -f (flash) explicitly');
+  if (flash && bitstreams.length === 0 && !args.includes('--detect')) return deny('a flash write needs a bitstream');
+  return OK;
+}
+
+/**
+ * A run that needs the user's explicit yes in the main process before it starts, or null. A flash write survives a
+ * power cycle and replaces what was on the board, so a page (even one with injected script) must not do it alone.
+ * "--detect -f" only lists the flash and is not a write.
+ */
+function confirmationFor(tool, args) {
+  if (tool !== 'openfpgaloader' || !Array.isArray(args)) return null;
+  if (!args.some((a) => OPENFPGALOADER_FLASH.has(a))) return null;
+  const bitstreams = loaderBitstreams(args);
+  if (bitstreams.length === 0) return null;
+  return { kind: 'flashWrite', file: bitstreams[0] };
+}
+
 // --- input files ------------------------------------------------------------------------------------
 
 function fileText(files, name) {
@@ -339,6 +424,7 @@ const CHECKERS = {
   ghdl: checkGhdl,
   'nextpnr-ecp5': (args) => checkOptionLine('nextpnr-ecp5', args, NEXTPNR_ECP5),
   ecppack: (args) => checkOptionLine('ecppack', args, ECPPACK),
+  openfpgaloader: checkOpenFpgaLoader,
 };
 
 /** { ok: true } or { ok: false, message } for a validated-shape request (tool known, args strings) */
@@ -350,4 +436,4 @@ function checkToolRequest(tool, args, files) {
   return checkInputFiles(files);
 }
 
-module.exports = { checkToolRequest, yosysCommands, checkYosysScript };
+module.exports = { checkToolRequest, confirmationFor, yosysCommands, checkYosysScript };

@@ -142,7 +142,59 @@ ipcMain.handle('lds-log:append', async (e, file, text) => {
 const tools = createToolRunner({
   readSettings,
   onProgress: (runId, progress) => toPage('lds-tool:progress', { runId, progress }),
+  confirmRun: confirmToolRun,
 });
+
+// Texts of the main-process confirmation; the page's language setting only picks between them.
+const CONFIRM_TEXT = {
+  en: {
+    title: 'Write to FPGA flash',
+    message: 'Write the bitstream to the board’s flash memory?',
+    detail: (file, kb) =>
+      `${file} (${kb} KB) will be written to the board’s configuration flash for good and replace what is there. The board will start with this design every time it powers up.`,
+    buttons: ['Write to flash', 'Cancel'],
+  },
+  tr: {
+    title: 'FPGA flash belleğine yaz',
+    message: 'Bitstream karttaki flash belleğe yazılsın mı?',
+    detail: (file, kb) =>
+      `${file} (${kb} KB) kartın yapılandırma flash belleğine kalıcı olarak yazılacak ve oradaki içeriğin yerini alacak. Kart her açılışta bu tasarımla başlayacak.`,
+    buttons: ['Flash’a yaz', 'İptal'],
+  },
+};
+
+async function pageLanguage() {
+  try {
+    const lang = await Promise.race([
+      mainWindow.webContents.executeJavaScript("localStorage.getItem('lds.language')"),
+      new Promise((resolve) => setTimeout(() => resolve(null), 500)),
+    ]);
+    if (lang === 'tr' || lang === 'en') return lang;
+  } catch {
+    /* fall back to the system language */
+  }
+  return app.getLocale().toLowerCase().startsWith('tr') ? 'tr' : 'en';
+}
+
+/**
+ * Asks the user before a tool run that changes the board for good (toolRunner confirmRun). A native dialog: the
+ * page cannot draw, hide or click it. "Cancel" is the default button.
+ */
+async function confirmToolRun({ kind, file, bytes }) {
+  if (kind !== 'flashWrite' || !mainWindow || mainWindow.isDestroyed()) return false;
+  const text = CONFIRM_TEXT[await pageLanguage()];
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    title: text.title,
+    message: text.message,
+    detail: text.detail(String(file), Math.max(1, Math.round(Number(bytes) / 1024))),
+    buttons: text.buttons,
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  });
+  return response === 0;
+}
 // Tool requests are accepted only from the app's own top-level page, never from an iframe or a foreign URL.
 const fromAppFrame = (e) => fromPage(e) && e.senderFrame === mainWindow.webContents.mainFrame && isAppUrl(e.senderFrame.url);
 ipcMain.handle('lds-tool:probe', (e, tool) => (fromAppFrame(e) ? tools.probe(String(tool)) : { available: false, reason: 'not-installed' }));

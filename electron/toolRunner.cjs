@@ -15,7 +15,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { isSafeRelativePath } = require('./pathRules.cjs');
-const { checkToolRequest } = require('./toolPolicy.cjs');
+const { checkToolRequest, confirmationFor } = require('./toolPolicy.cjs');
 
 const IS_WIN = process.platform === 'win32';
 
@@ -25,6 +25,8 @@ const TOOLS = {
   yosys: { executable: 'yosys', versionArgs: ['-V'] },
   'nextpnr-ecp5': { executable: 'nextpnr-ecp5', versionArgs: ['--version'] },
   ecppack: { executable: 'ecppack', versionArgs: ['--version'] },
+  // Talks to a board over USB: one run at a time, since two programmers on the same cable would collide.
+  openfpgaloader: { executable: 'openFPGALoader', versionArgs: ['--version'], exclusive: true },
 };
 
 const LIMITS = {
@@ -74,9 +76,16 @@ function killTree(child) {
   }
 }
 
-function createToolRunner({ readSettings, onProgress }) {
+/**
+ * confirmRun(request): asked before a run that changes something outside the computer for good (a flash write,
+ * see confirmationFor in toolPolicy.cjs). It must ask the user in the main process (a native dialog the page cannot
+ * draw or click) and resolve to true only on an explicit yes. Without it such runs are refused.
+ */
+function createToolRunner({ readSettings, onProgress, confirmRun }) {
   const probeCache = new Map(); // tool id -> { available, version?, exe? }
   const running = new Map(); // run id -> { child, cancelled }
+  const busyTools = new Set(); // exclusive tools with a run in progress (including its confirmation)
+  const confirming = new Map(); // run id -> { cancelled } while the user is asked
 
   function candidates(id) {
     const def = TOOLS[id];
@@ -215,7 +224,7 @@ function createToolRunner({ readSettings, onProgress }) {
     if (!req || typeof req !== 'object') return toolError('bad-request', 'Missing request');
     const { runId, tool, args, files, outputs } = req;
     if (typeof runId !== 'string' || runId.length === 0 || runId.length > 100) return toolError('bad-request', 'Bad run id');
-    if (running.has(runId)) return toolError('bad-request', 'Run id already in use');
+    if (running.has(runId) || confirming.has(runId)) return toolError('bad-request', 'Run id already in use');
     if (!Object.prototype.hasOwnProperty.call(TOOLS, tool)) return toolError('bad-request', 'Unknown tool');
     if (!Array.isArray(args) || args.length > LIMITS.args) return toolError('bad-request', 'Bad arguments');
     for (const a of args) {
@@ -241,7 +250,35 @@ function createToolRunner({ readSettings, onProgress }) {
     const exe = resolveExecutable(tool);
     if (!exe) return toolError('unavailable', `${tool} is not installed`);
 
-    // --- run in a fresh directory ---
+    const exclusive = TOOLS[tool].exclusive === true;
+    if (exclusive && busyTools.has(tool)) return toolError('bad-request', `${tool} is already running`);
+    if (exclusive) busyTools.add(tool);
+    try {
+      const confirmation = confirmationFor(tool, args);
+      if (confirmation) {
+        const gate = { cancelled: false };
+        confirming.set(runId, gate);
+        let yes = false;
+        try {
+          const data = Object.prototype.hasOwnProperty.call(files || {}, confirmation.file) ? files[confirmation.file] : undefined;
+          const bytes = typeof data === 'string' ? Buffer.byteLength(data) : data ? data.length : 0;
+          yes = typeof confirmRun === 'function' && (await confirmRun({ tool, kind: confirmation.kind, file: confirmation.file, bytes })) === true;
+        } catch {
+          yes = false;
+        } finally {
+          confirming.delete(runId);
+        }
+        if (gate.cancelled) return toolError('cancelled', 'Cancelled');
+        if (!yes) return toolError('cancelled', 'Declined by the user');
+      }
+      return await runInFolder(exe, { runId, tool, args, fileEntries, outputList, timeoutMs });
+    } finally {
+      if (exclusive) busyTools.delete(tool);
+    }
+  }
+
+  /** Writes the inputs to a fresh temporary folder, runs the tool there and reads back the named outputs */
+  async function runInFolder(exe, { runId, args, fileEntries, outputList, timeoutMs }) {
     const started = Date.now();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lds-tool-'));
     try {
@@ -299,6 +336,11 @@ function createToolRunner({ readSettings, onProgress }) {
   }
 
   function cancel(runId) {
+    const gate = confirming.get(runId);
+    if (gate) {
+      gate.cancelled = true;
+      return true;
+    }
     const entry = running.get(runId);
     if (!entry) return false;
     entry.cancelled = true;
@@ -307,7 +349,7 @@ function createToolRunner({ readSettings, onProgress }) {
   }
 
   function cancelAll() {
-    for (const id of [...running.keys()]) cancel(id);
+    for (const id of [...running.keys(), ...confirming.keys()]) cancel(id);
   }
 
   return { probe, run, cancel, cancelAll, resetProbes };
