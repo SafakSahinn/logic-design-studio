@@ -17,6 +17,7 @@
 'use strict';
 
 const { isSafeRelativePath } = require('./pathRules.cjs');
+const { PART_RE } = require('./openxc7.cjs');
 
 const deny = (message) => ({ ok: false, message });
 const OK = { ok: true };
@@ -231,11 +232,14 @@ function checkGhdl(args) {
 
 /**
  * Checks a command line against an allowlist of exact option names:
- *   flags: options without a value; plain: values that are words or numbers; paths: values that are files.
+ *   flags: options without a value; plain: values that are words or numbers; paths: values that are files;
+ *   checked: option name -> a checker for its value (nextpnr-xilinx -o / --vopt).
  * Positional arguments must be safe relative paths. Abbreviated option names are refused because they are not
- * in the list.
+ * in the list. The walk consumes values exactly as boost::program_options does, and a value may never start
+ * with "-": a check that pairs options and values differently from the tool could otherwise let a refused option
+ * through as some other option's value (6j-6 security review).
  */
-function checkOptionLine(tool, args, { flags, plain, paths, positional }) {
+function checkOptionLine(tool, args, { flags, plain, paths, positional, checked = {} }) {
   for (let i = 0; i < args.length; i++) {
     let arg = args[i];
     let inline;
@@ -248,8 +252,15 @@ function checkOptionLine(tool, args, { flags, plain, paths, positional }) {
       if (inline !== undefined) return deny(`${tool} option ${arg} takes no value`);
       continue;
     }
-    if (plain.has(arg) || paths.has(arg)) {
+    const isChecked = Object.prototype.hasOwnProperty.call(checked, arg);
+    if (plain.has(arg) || paths.has(arg) || isChecked) {
       const value = inline ?? args[++i];
+      if (typeof value === 'string' && value.startsWith('-')) return deny(`${arg}: a value may not start with "-"`);
+      if (isChecked) {
+        const c = checked[arg](value);
+        if (!c.ok) return c;
+        continue;
+      }
       const r = paths.has(arg) ? checkRelativePath(value, arg) : checkPlainOrRelative(value, arg);
       if (!r.ok) return r;
       if (plain.has(arg) && isPathLike(value)) return deny(`${arg}: expects a plain value`);
@@ -286,6 +297,81 @@ const ECPPACK = {
   positional: true,
 };
 
+// --- openXC7 (nextpnr-xilinx, fasm2frames, xc7frames2bit) ------------------------------------------
+
+// As nextpnr-ecp5, plus --device (checked against PART_RE). Left out: --chipdb (a database outside the run folder), --test, --list-uarch and
+// the Python hooks. -o / --vopt is checked on its own (checkNextpnrXilinx).
+const NEXTPNR_XILINX = {
+  flags: new Set(['-h', '--help', '-v', '--verbose', '-q', '--quiet', '--Werror', '--debug', '--debug-placer', '--debug-router', '-f',
+    '--force', '-r', '--randomize-seed', '--pack-only', '--no-route', '--no-place', '--no-pack', '--ignore-loops', '--ignore-rel-clk',
+    '-V', '--version', '--timing-allow-fail', '--no-tmdriv', '--sdf-cvc', '--no-print-critical-path-source', '--placer-heap-no-ctrl-set',
+    '--parallel-refine', '--tmg-ripup', '--router2-tmg-ripup', '--router2-alt-weights', '--detailed-timing-report']),
+  plain: new Set(['--threads', '--top', '--seed', '--placer', '--router', '--cstrweight', '--starttemp', '--freq',
+    '--placer-heap-alpha', '--placer-heap-beta', '--placer-heap-critexp', '--placer-heap-timingweight', '--placer-heap-cell-placement-timeout']),
+  paths: new Set(['-l', '--log', '--json', '--write', '--sdc', '--sdf', '--report', '--placed-svg', '--routed-svg']),
+  positional: false,
+};
+/**
+ * nextpnr-xilinx's -o / --vopt values that are allowed: the constraints it reads and the FASM it writes, both in
+ * the run folder. Refused: placement / preplaced / prerouted / holdbufs (more files), delay-matrix (a cache path),
+ * and the tuning options (not needed by the app).
+ */
+const XILINX_VOPTS = new Set(['fasm', 'xdc']);
+
+function checkXilinxVopt(value) {
+  const m = typeof value === 'string' ? /^([a-z-]+)=(.*)$/.exec(value) : null;
+  if (!m || !XILINX_VOPTS.has(m[1])) return deny(`nextpnr-xilinx -o ${value ?? ''}: only fasm= and xdc= are allowed`);
+  return checkRelativePath(m[2], `-o ${m[1]}`);
+}
+
+const checkXilinxDevice = (value) => (typeof value === 'string' && PART_RE.test(value) ? OK : deny('--device: expects a 7-series part name'));
+
+// -o / --vopt / --device go through the same walk as every other option, so values pair up as boost pairs them
+const checkNextpnrXilinx = (args) =>
+  checkOptionLine('nextpnr-xilinx', args, { ...NEXTPNR_XILINX, checked: { '-o': checkXilinxVopt, '--vopt': checkXilinxVopt, '--device': checkXilinxDevice } });
+
+/**
+ * Exact command lines of the two bitstream tools. The main process adds the database paths (openxc7.cjs), so the
+ * page may not name them: fasm2frames is an argparse program (it would take --db-root, abbreviations like --db,
+ * --roi with a file), xc7frames2bit a gflags program (it would take -part_file, -flagfile, -fromenv ...). Each
+ * accepts one exact option spelling plus file names, nothing else.
+ */
+function checkExactLine(tool, args, valueOptions, positional) {
+  const seen = new Set();
+  const files = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (Object.prototype.hasOwnProperty.call(valueOptions, arg)) {
+      if (seen.has(arg)) return deny(`${tool}: ${arg} given twice`);
+      seen.add(arg);
+      const value = args[++i];
+      const kind = valueOptions[arg];
+      if (kind === 'part') {
+        if (typeof value !== 'string' || !PART_RE.test(value)) return deny(`${tool} ${arg}: expects a 7-series part name`);
+      } else {
+        const r = checkRelativePath(value, arg);
+        if (!r.ok) return r;
+        if (!kind.test(value)) return deny(`${tool} ${arg}: this file type is not allowed`);
+      }
+      continue;
+    }
+    if (arg.startsWith('-') || arg.startsWith('@')) return deny(`${tool} option ${arg} is not allowed`);
+    files.push(arg);
+  }
+  for (const name of Object.keys(valueOptions)) if (!seen.has(name)) return deny(`${tool}: ${name} is required`);
+  if (files.length !== positional.length) return deny(`${tool}: expects ${positional.length} file names`);
+  for (let i = 0; i < files.length; i++) {
+    const r = checkRelativePath(files[i], 'argument');
+    if (!r.ok) return r;
+    if (!positional[i].test(files[i])) return deny(`${tool} ${files[i]}: this file type is not allowed`);
+  }
+  return OK;
+}
+
+const checkFasm2frames = (args) => checkExactLine('fasm2frames', args, { '--part': 'part' }, [/\.fasm$/i, /\.frames$/i]);
+const checkXc7frames2bit = (args) =>
+  checkExactLine('xc7frames2bit', args, { '--part_name': 'part', '--frm_file': /\.frames$/i, '--output_file': /\.bit$/i }, []);
+
 // --- openFPGALoader ---------------------------------------------------------------------------------
 
 /**
@@ -317,10 +403,11 @@ const OPENFPGALOADER_FLASH = new Set(['-f', '--write-flash']);
 const LOADER_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$/;
 const BITSTREAM_EXT = /\.bit$/i;
 const OPENFPGALOADER_SRAM = new Set(['-m', '--write-sram']);
-// openFPGALoader board names the app may pass with -b / --board (none yet: GECKO5 uses the default cable)
-const LOADER_BOARDS = new Set([]);
-// openFPGALoader cable names the app may pass with -c / --cable (none yet, for the same reason)
-const LOADER_CABLES = new Set([]);
+// openFPGALoader board names the app may pass with -b / --board (mirrors PROGRAMMER_ARGS in src/fpga/flow/program.ts;
+// GECKO5 uses the default cable)
+const LOADER_BOARDS = new Set(['basys3', 'nexys_a7_100', 'alchitry_au', 'pynq_z2']);
+// openFPGALoader cable names the app may pass with -c / --cable: USB cables only (the Zybo's Digilent FT2232)
+const LOADER_CABLES = new Set(['digilent']);
 
 /** The bitstream files of an openFPGALoader command line (positional or --bitstream) */
 function loaderBitstreams(args) {
@@ -429,6 +516,9 @@ const CHECKERS = {
   ghdl: checkGhdl,
   'nextpnr-ecp5': (args) => checkOptionLine('nextpnr-ecp5', args, NEXTPNR_ECP5),
   ecppack: (args) => checkOptionLine('ecppack', args, ECPPACK),
+  'nextpnr-xilinx': checkNextpnrXilinx,
+  fasm2frames: checkFasm2frames,
+  xc7frames2bit: checkXc7frames2bit,
   openfpgaloader: checkOpenFpgaLoader,
 };
 

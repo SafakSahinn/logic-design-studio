@@ -16,6 +16,7 @@ const os = require('os');
 const path = require('path');
 const { isSafeRelativePath } = require('./pathRules.cjs');
 const { checkToolRequest, confirmationFor } = require('./toolPolicy.cjs');
+const openxc7 = require('./openxc7.cjs');
 
 const IS_WIN = process.platform === 'win32';
 
@@ -25,6 +26,11 @@ const TOOLS = {
   yosys: { executable: 'yosys', versionArgs: ['-V'] },
   'nextpnr-ecp5': { executable: 'nextpnr-ecp5', versionArgs: ['--version'] },
   ecppack: { executable: 'ecppack', versionArgs: ['--version'] },
+  // Xilinx 7-series through openXC7 (6j-6). The database paths are added here, never sent by the page (openxc7.cjs).
+  'nextpnr-xilinx': { executable: 'nextpnr-xilinx', versionArgs: ['--version'] },
+  xc7frames2bit: { executable: 'xc7frames2bit', versionArgs: ['--version'], launch: 'xc7frames2bit' },
+  // A Python program of the openXC7 package: found through the package's xc7frames2bit, run by a Python 3
+  fasm2frames: { executable: 'xc7frames2bit', versionArgs: [], launch: 'fasm2frames' },
   // Talks to a board over USB: one run at a time, since two programmers on the same cable would collide.
   openfpgaloader: { executable: 'openFPGALoader', versionArgs: ['--version'], exclusive: true },
 };
@@ -87,28 +93,92 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
   const busyTools = new Set(); // exclusive tools with a run in progress (including its confirmation)
   const confirming = new Map(); // run id -> { cancelled } while the user is asked
 
+  /** settings.toolSearchDirs, then PATH: absolute folders only */
+  function searchDirs(settings) {
+    return [
+      ...(Array.isArray(settings.toolSearchDirs) ? settings.toolSearchDirs : []),
+      ...String(process.env.PATH || '').split(path.delimiter),
+    ]
+      .filter((d) => typeof d === 'string' && d.trim() !== '' && path.isAbsolute(d.trim()))
+      .map((d) => d.trim());
+  }
+
   function candidates(id) {
     const def = TOOLS[id];
     const settings = readSettings() || {};
     const names = IS_WIN ? [`${def.executable}.exe`] : [def.executable];
     const list = [];
-    const fixed = settings.toolPaths && settings.toolPaths[id];
+    // fasm2frames is found through the package's xc7frames2bit, so it shares that tool's fixed path
+    const fixed = settings.toolPaths && settings.toolPaths[def.launch === 'fasm2frames' ? 'xc7frames2bit' : id];
     if (typeof fixed === 'string' && path.isAbsolute(fixed)) list.push(fixed);
-    const dirs = [
-      ...(Array.isArray(settings.toolSearchDirs) ? settings.toolSearchDirs : []),
-      ...String(process.env.PATH || '').split(path.delimiter),
-    ].filter((d) => typeof d === 'string' && d.trim() !== '' && path.isAbsolute(d.trim()));
-    for (const d of dirs) for (const n of names) list.push(path.join(d.trim(), n));
+    for (const d of searchDirs(settings)) for (const n of names) list.push(path.join(d, n));
     return list;
   }
 
   function resolveExecutable(id) {
+    const def = TOOLS[id];
     for (const c of candidates(id)) {
       // Only real executables: on Windows a .bat/.cmd would need a shell, which is never used here.
       if (IS_WIN && path.extname(c).toLowerCase() !== '.exe') continue;
-      if (isFile(c)) return c;
+      if (!isFile(c)) continue;
+      // The openXC7 bitstream tools need their package around them; another xc7frames2bit (a plain Project X-Ray
+      // build) earlier on PATH is passed over
+      if (def.launch && !openxc7.locatePackage(c)) continue;
+      return c;
     }
     return null;
+  }
+
+  // The interpreter search for fasm2frames, per package + settings: { key, promise } resolving to
+  // { exe, version } or null. A miss is remembered too (resetProbes forgets it), and callers share one search.
+  let pythonCache = null;
+
+  /** A Python 3 that imports the package's fasm and prjxray modules, or null */
+  function packagePython(pkg) {
+    const settings = readSettings() || {};
+    const key = JSON.stringify([pkg.root, settings.toolPaths && settings.toolPaths.python, settings.toolSearchDirs, process.env.PATH]);
+    if (pythonCache && pythonCache.key === key) return pythonCache.promise;
+    const search = async () => {
+      const yosysExe = resolveExecutable('yosys');
+      for (const exe of openxc7.pythonCandidates({ settings, yosysExe, dirs: searchDirs(settings), isWin: IS_WIN })) {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lds-probe-'));
+        try {
+          const r = await execute(exe, openxc7.probeArgs(pkg), tmp, { timeoutMs: LIMITS.probeTimeoutMs });
+          if (!r.spawnError && !r.timedOut && r.exitCode === 0) return { exe, version: r.stdout.trim().split(/\r?\n/)[0] };
+        } finally {
+          fs.rmSync(tmp, { recursive: true, force: true });
+        }
+      }
+      return null;
+    };
+    pythonCache = { key, promise: search() };
+    return pythonCache.promise;
+  }
+
+  /**
+   * The program and command line a request really runs, or a tool error. Most tools run their executable with the
+   * page's arguments. The openXC7 bitstream tools also get their database paths here, from the part name the
+   * policy already checked (toolPolicy.cjs): the page never names a file outside the run folder.
+   */
+  async function resolveLaunch(id, args) {
+    const def = TOOLS[id];
+    const exe = resolveExecutable(id);
+    if (!exe) return toolError('unavailable', `${id} is not installed`);
+    if (!def.launch) return { exe, args };
+    const pkg = openxc7.locatePackage(exe);
+    if (!pkg) return toolError('unavailable', `${id}: the openXC7 package around ${exe} is incomplete`);
+    const at = args.indexOf(def.launch === 'fasm2frames' ? '--part' : '--part_name');
+    const part = at >= 0 ? args[at + 1] : undefined;
+    if (def.launch === 'xc7frames2bit') {
+      const yaml = openxc7.partFile(pkg, part);
+      if (!yaml) return toolError('bad-request', `The openXC7 database has no part ${part}`);
+      return { exe, args: [...args, '--part_file', yaml] };
+    }
+    const dbFamily = openxc7.familyRoot(pkg, part);
+    if (!dbFamily || !openxc7.partFile(pkg, part)) return toolError('bad-request', `The openXC7 database has no part ${part}`);
+    const python = await packagePython(pkg);
+    if (!python) return toolError('unavailable', 'fasm2frames needs Python 3 with the openXC7 modules; none was found (the OSS CAD Suite ships one)');
+    return { exe: python.exe, args: openxc7.fasm2framesArgs(pkg, dbFamily, args) };
   }
 
   /**
@@ -198,7 +268,11 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
     if (probeCache.has(id)) return probeCache.get(id);
     const exe = resolveExecutable(id);
     let result = { available: false, reason: 'not-installed' };
-    if (exe) {
+    if (exe && TOOLS[id].launch === 'fasm2frames') {
+      const pkg = openxc7.locatePackage(exe);
+      const python = pkg ? await packagePython(pkg) : null;
+      if (python) result = { available: true, version: python.version ? python.version.slice(0, 200) : undefined };
+    } else if (exe) {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lds-probe-'));
       try {
         const r = await execute(exe, TOOLS[id].versionArgs, tmp, { timeoutMs: LIMITS.probeTimeoutMs });
@@ -218,6 +292,7 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
   /** Forgets probe results (after the settings change) */
   function resetProbes() {
     probeCache.clear();
+    pythonCache = null;
   }
 
   async function run(req) {
@@ -248,8 +323,18 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
     if (!policy.ok) return toolError('bad-request', policy.message);
     const timeoutMs = Number.isFinite(req.timeoutMs) && req.timeoutMs > 0 ? Math.min(req.timeoutMs, LIMITS.timeoutMs) : LIMITS.defaultTimeoutMs;
 
-    const exe = resolveExecutable(tool);
-    if (!exe) return toolError('unavailable', `${tool} is not installed`);
+    // The launch can take a while (the first fasm2frames run looks for a Python): the run id is reserved meanwhile,
+    // so a cancel (Cancel, page reload) during that time is not lost
+    const reserve = { cancelled: false, abort: new AbortController() };
+    confirming.set(runId, reserve);
+    let launch;
+    try {
+      launch = await resolveLaunch(tool, args);
+    } finally {
+      confirming.delete(runId);
+    }
+    if (reserve.cancelled) return toolError('cancelled', 'Cancelled');
+    if (launch.error) return launch;
 
     const exclusive = TOOLS[tool].exclusive === true;
     if (exclusive && busyTools.has(tool)) return toolError('busy', `${tool} is already running`);
@@ -276,7 +361,7 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
       // A confirmed flash write is not killed by a cancel (page reload, Cancel): openFPGALoader stopped halfway would
       // leave the board's flash half written. Its timeout still applies.
       const uninterruptible = !!confirmation && confirmation.kind === 'flashWrite';
-      return await runInFolder(exe, { runId, tool, args, fileEntries, outputList, timeoutMs, uninterruptible });
+      return await runInFolder(launch.exe, { runId, tool, args: launch.args, fileEntries, outputList, timeoutMs, uninterruptible });
     } finally {
       if (exclusive) busyTools.delete(tool);
     }
