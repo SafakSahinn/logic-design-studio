@@ -299,7 +299,9 @@ const ECPPACK = {
  * (confirmationFor below). That decision must not depend on anything but -f, so:
  *   - only .bit files are accepted: an .svf file is a raw JTAG script that can erase and write the flash by itself;
  *   - a run with a bitstream must say -m (SRAM) or -f (flash) explicitly: some boards write flash by default;
- *   - -b names only boards listed in LOADER_BOARDS (mirrors src/fpga/flow/program.ts), for the same reason.
+ *   - -b names only boards listed in LOADER_BOARDS (mirrors src/fpga/flow/program.ts), for the same reason;
+ *   - -c names only cables listed in LOADER_CABLES: some cable types (xvc-client, remote-bitbang) open a network
+ *     connection instead of using USB.
  */
 const OPENFPGALOADER = {
   flags: new Set(['-h', '--help', '-V', '--version', '--Version', '-v', '--verbose', '--quiet', '-f', '--write-flash', '-m',
@@ -317,6 +319,8 @@ const BITSTREAM_EXT = /\.bit$/i;
 const OPENFPGALOADER_SRAM = new Set(['-m', '--write-sram']);
 // openFPGALoader board names the app may pass with -b / --board (none yet: GECKO5 uses the default cable)
 const LOADER_BOARDS = new Set([]);
+// openFPGALoader cable names the app may pass with -c / --cable (none yet, for the same reason)
+const LOADER_CABLES = new Set([]);
 
 /** The bitstream files of an openFPGALoader command line (positional or --bitstream) */
 function loaderBitstreams(args) {
@@ -342,6 +346,7 @@ function checkOpenFpgaLoader(args, files) {
     const value = eq > 0 ? arg.slice(eq + 1) : args[++i];
     if (!LOADER_VALUE.test(value)) return deny(`${name}: expects a plain name or number`);
     if ((name === '-b' || name === '--board') && !LOADER_BOARDS.has(value)) return deny(`${name} ${value}: this board is not allowed`);
+    if ((name === '-c' || name === '--cable') && !LOADER_CABLES.has(value)) return deny(`${name} ${value}: this cable is not allowed`);
   }
   const bitstreams = loaderBitstreams(args);
   if (bitstreams.length > 1) return deny('openFPGALoader takes one bitstream');

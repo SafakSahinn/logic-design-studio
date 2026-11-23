@@ -171,18 +171,20 @@ async function pageLanguage() {
     ]);
     if (lang === 'tr' || lang === 'en') return lang;
   } catch {
-    /* fall back to the system language */
+    /* fall back to the page's own default */
   }
-  return app.getLocale().toLowerCase().startsWith('tr') ? 'tr' : 'en';
+  // The page does not follow the system language either (src/i18n DEFAULT_LANGUAGE)
+  return 'en';
 }
 
 /**
  * Asks the user before a tool run that changes the board for good (toolRunner confirmRun). A native dialog: the
  * page cannot draw, hide or click it. "Cancel" is the default button.
  */
-async function confirmToolRun({ kind, file, bytes }) {
-  if (kind !== 'flashWrite' || !mainWindow || mainWindow.isDestroyed()) return false;
+async function confirmToolRun({ kind, file, bytes, signal }) {
+  if (kind !== 'flashWrite' || !mainWindow || mainWindow.isDestroyed() || signal?.aborted) return false;
   const text = CONFIRM_TEXT[await pageLanguage()];
+  if (signal?.aborted) return false;
   const { response } = await dialog.showMessageBox(mainWindow, {
     type: 'warning',
     title: text.title,
@@ -192,6 +194,8 @@ async function confirmToolRun({ kind, file, bytes }) {
     defaultId: 1,
     cancelId: 1,
     noLink: true,
+    // The run was cancelled (Cancel button, page reload) while the question is open: close it
+    signal,
   });
   return response === 0;
 }

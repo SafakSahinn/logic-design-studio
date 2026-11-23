@@ -132,7 +132,7 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
   }
 
   /** Runs exe with args in cwd; resolves when it exits (never rejects) */
-  function execute(exe, args, cwd, { timeoutMs, runId, onLine }) {
+  function execute(exe, args, cwd, { timeoutMs, runId, onLine, uninterruptible = false }) {
     return new Promise((resolve) => {
       let child;
       try {
@@ -141,7 +141,7 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
         resolve({ spawnError: String(err && err.message ? err.message : err) });
         return;
       }
-      const entry = { child, cancelled: false };
+      const entry = { child, cancelled: false, uninterruptible };
       if (runId) running.set(runId, entry);
 
       const out = { stdout: [], stderr: [], bytes: { stdout: 0, stderr: 0 }, partial: { stdout: '', stderr: '' } };
@@ -210,7 +210,8 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
         fs.rmSync(tmp, { recursive: true, force: true });
       }
     }
-    probeCache.set(id, result);
+    // Only a found tool is remembered: one installed later is picked up the next time the page asks
+    if (result.available) probeCache.set(id, result);
     return result;
   }
 
@@ -251,18 +252,19 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
     if (!exe) return toolError('unavailable', `${tool} is not installed`);
 
     const exclusive = TOOLS[tool].exclusive === true;
-    if (exclusive && busyTools.has(tool)) return toolError('bad-request', `${tool} is already running`);
+    if (exclusive && busyTools.has(tool)) return toolError('busy', `${tool} is already running`);
     if (exclusive) busyTools.add(tool);
     try {
       const confirmation = confirmationFor(tool, args);
       if (confirmation) {
-        const gate = { cancelled: false };
+        // Cancelling the run while the question is open closes the question (as "no")
+        const gate = { cancelled: false, abort: new AbortController() };
         confirming.set(runId, gate);
         let yes = false;
         try {
           const data = Object.prototype.hasOwnProperty.call(files || {}, confirmation.file) ? files[confirmation.file] : undefined;
           const bytes = typeof data === 'string' ? Buffer.byteLength(data) : data ? data.length : 0;
-          yes = typeof confirmRun === 'function' && (await confirmRun({ tool, kind: confirmation.kind, file: confirmation.file, bytes })) === true;
+          yes = typeof confirmRun === 'function' && (await confirmRun({ tool, kind: confirmation.kind, file: confirmation.file, bytes, signal: gate.abort.signal })) === true;
         } catch {
           yes = false;
         } finally {
@@ -271,14 +273,17 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
         if (gate.cancelled) return toolError('cancelled', 'Cancelled');
         if (!yes) return toolError('cancelled', 'Declined by the user');
       }
-      return await runInFolder(exe, { runId, tool, args, fileEntries, outputList, timeoutMs });
+      // A confirmed flash write is not killed by a cancel (page reload, Cancel): openFPGALoader stopped halfway would
+      // leave the board's flash half written. Its timeout still applies.
+      const uninterruptible = !!confirmation && confirmation.kind === 'flashWrite';
+      return await runInFolder(exe, { runId, tool, args, fileEntries, outputList, timeoutMs, uninterruptible });
     } finally {
       if (exclusive) busyTools.delete(tool);
     }
   }
 
   /** Writes the inputs to a fresh temporary folder, runs the tool there and reads back the named outputs */
-  async function runInFolder(exe, { runId, args, fileEntries, outputList, timeoutMs }) {
+  async function runInFolder(exe, { runId, args, fileEntries, outputList, timeoutMs, uninterruptible }) {
     const started = Date.now();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lds-tool-'));
     try {
@@ -308,7 +313,7 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
         if (!flushTimer) flushTimer = setTimeout(flush, 100);
       };
 
-      const r = await execute(exe, args, dir, { timeoutMs, runId, onLine });
+      const r = await execute(exe, args, dir, { timeoutMs, runId, onLine, uninterruptible });
       if (flushTimer) clearTimeout(flushTimer);
       flush();
 
@@ -339,10 +344,11 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
     const gate = confirming.get(runId);
     if (gate) {
       gate.cancelled = true;
+      gate.abort.abort();
       return true;
     }
     const entry = running.get(runId);
-    if (!entry) return false;
+    if (!entry || entry.uninterruptible) return false;
     entry.cancelled = true;
     killTree(entry.child);
     return true;
