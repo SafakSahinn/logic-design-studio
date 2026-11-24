@@ -18,6 +18,7 @@
 
 const { isSafeRelativePath } = require('./pathRules.cjs');
 const { PART_RE } = require('./openxc7.cjs');
+const { checkVendorRequest } = require('./vendorPolicy.cjs');
 
 const deny = (message) => ({ ok: false, message });
 const OK = { ok: true };
@@ -500,6 +501,10 @@ function checkInputFiles(files) {
       for (const m of text.matchAll(/\$readmem[hb]\s*\(\s*([^,)]*)/gi)) {
         if (!isRelativeLiteral(m[1])) return deny(`${name}: $readmem must name a relative file as a plain string`);
       }
+      // Vivado and Quartus synthesis also open files in initial blocks ($fopen, then $fscanf / $fwrite)
+      for (const m of text.matchAll(/\$fopen\s*\(\s*([^,)]*)/gi)) {
+        if (!isRelativeLiteral(m[1])) return deny(`${name}: $fopen must name a relative file as a plain string`);
+      }
     }
     if (vhdl) {
       if (/\bfile_open\s*\(/i.test(text)) return deny(`${name}: file_open is not allowed; declare the file with a relative string instead`);
@@ -520,6 +525,10 @@ const CHECKERS = {
   fasm2frames: checkFasm2frames,
   xc7frames2bit: checkXc7frames2bit,
   openfpgaloader: checkOpenFpgaLoader,
+  // Vendor tools (6k-1): an option line the main process turns into a fixed script (vendorPolicy.cjs, vendorScripts.cjs)
+  vivado: (args, files) => checkVendorRequest('vivado', args, files),
+  quartus: (args, files) => checkVendorRequest('quartus', args, files),
+  ise: (args, files) => checkVendorRequest('ise', args, files),
 };
 
 /** { ok: true } or { ok: false, message } for a validated-shape request (tool known, args strings) */

@@ -17,6 +17,9 @@ const path = require('path');
 const { isSafeRelativePath } = require('./pathRules.cjs');
 const { checkToolRequest, confirmationFor } = require('./toolPolicy.cjs');
 const openxc7 = require('./openxc7.cjs');
+const vendor = require('./vendorTools.cjs');
+const { parseVendorArgs } = require('./vendorPolicy.cjs');
+const { scriptFor } = require('./vendorScripts.cjs');
 
 const IS_WIN = process.platform === 'win32';
 
@@ -33,9 +36,18 @@ const TOOLS = {
   fasm2frames: { executable: 'xc7frames2bit', versionArgs: [], launch: 'fasm2frames' },
   // Talks to a board over USB: one run at a time, since two programmers on the same cable would collide.
   openfpgaloader: { executable: 'openFPGALoader', versionArgs: ['--version'], exclusive: true },
+  // Vendor FPGA tools (6k-1): found by vendorTools.cjs (installs, not PATH), started from fixed templates
+  // (vendorScripts.cjs). The page sends an option line (vendorPolicy.cjs), never a script. executable is informative
+  // (the same as src/tools/registry.ts); vendorTools.cjs decides the real program.
+  vivado: { vendor: true, executable: 'vivado', versionArgs: [] },
+  quartus: { vendor: true, executable: 'quartus_sh', versionArgs: [] },
+  ise: { vendor: true, executable: 'xst', versionArgs: [] },
 };
 
-const LIMITS = {
+/** Arguments that print a vendor install's version (the "check" button); xst -help also shows the ISE start-up hang */
+const VENDOR_CHECK = { vivado: ['-version'], quartus: ['--version'], quartusLegacy: ['--version'], ise: ['-help'] };
+
+const BASE_LIMITS = {
   args: 512,
   argLength: 64 * 1024,
   files: 512,
@@ -45,6 +57,10 @@ const LIMITS = {
   timeoutMs: 30 * 60 * 1000, // ceiling for a requested timeout
   defaultTimeoutMs: 60 * 1000,
   probeTimeoutMs: 15 * 1000,
+  // A vendor tool that prints nothing at all for this long has hung at start-up (ISE: a network provider, see
+  // the "stalled" hint); a working one prints its banner within seconds
+  vendorFirstOutputMs: 90 * 1000,
+  vendorCheckTimeoutMs: 120 * 1000,
 };
 
 const toolError = (kind, message) => ({ error: { kind, message } });
@@ -87,7 +103,9 @@ function killTree(child) {
  * see confirmationFor in toolPolicy.cjs). It must ask the user in the main process (a native dialog the page cannot
  * draw or click) and resolve to true only on an explicit yes. Without it such runs are refused.
  */
-function createToolRunner({ readSettings, onProgress, confirmRun }) {
+function createToolRunner({ readSettings, onProgress, confirmRun, limits }) {
+  // limits: test-only overrides of BASE_LIMITS (the app never passes it)
+  const LIMITS = { ...BASE_LIMITS, ...(limits && typeof limits === 'object' ? limits : {}) };
   const probeCache = new Map(); // tool id -> { available, version?, exe? }
   const running = new Map(); // run id -> { child, cancelled }
   const busyTools = new Set(); // exclusive tools with a run in progress (including its confirmation)
@@ -155,6 +173,111 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
     return pythonCache.promise;
   }
 
+  /** Vendor installs found now, per kind, best first (vendorTools.findInstalls) */
+  function vendorInstalls() {
+    return vendor.findInstalls({ settings: readSettings() || {} });
+  }
+
+  /** The install a vendor request runs on ({ kind, exe, version }) or a tool error naming what is missing */
+  function pickVendorInstall(tool, request) {
+    const installs = vendorInstalls();
+    const kinds = tool === 'quartus' ? vendor.quartusKindsFor(request.part) : [tool];
+    for (const kind of kinds) if (installs[kind].length) return { kind, ...installs[kind][0] };
+    const names = { vivado: 'Vivado', quartus: 'Quartus Prime', quartusLegacy: 'Quartus II 13.0sp1', ise: 'ISE 14.7' };
+    return toolError('unavailable', `${kinds.map((k) => names[k]).join(' or ')} is not installed (needed for ${request.part || tool})`);
+  }
+
+  /**
+   * A vendor request's launch: the program (an ISE step's executable, or the batch file through cmd.exe), its
+   * command line and the generated files, all from fixed templates; the page's option line only fills them in.
+   */
+  function resolveVendorLaunch(tool, args) {
+    const parsed = parseVendorArgs(tool, args);
+    if (!parsed.ok) return toolError('bad-request', parsed.message);
+    const install = pickVendorInstall(tool, parsed.request);
+    if (install.error) return install;
+    let script;
+    try {
+      script = scriptFor(tool, parsed.request);
+    } catch (err) {
+      return toolError('bad-request', String(err && err.message ? err.message : err));
+    }
+    const exe = script.program ? path.join(path.dirname(install.exe), IS_WIN ? `${script.program}.exe` : script.program) : install.exe;
+    if (!isFile(exe)) return toolError('unavailable', `${tool}: ${exe} is missing`);
+    const spec = vendor.launchSpec(exe, script.args, IS_WIN);
+    if (spec.error) return toolError('bad-request', spec.error);
+    return {
+      exe: spec.file,
+      args: spec.args,
+      verbatim: spec.verbatim,
+      env: vendor.vendorEnv(install.kind, install.exe),
+      extraFiles: script.files,
+      appendFiles: script.append,
+      firstOutputMs: LIMITS.vendorFirstOutputMs,
+      install: { kind: install.kind, version: install.version },
+    };
+  }
+
+  /**
+   * The vendor installs for the settings panel: per kind the one a run uses and the others found, with where it
+   * came from ("settings": picked by the user, "auto": found).
+   */
+  function vendorStatus() {
+    const installs = vendorInstalls();
+    return Object.fromEntries(vendor.KINDS.map((k) => [k, installs[k].map(({ exe, version, source }) => ({ exe, version, source }))]));
+  }
+
+  /**
+   * Runs an install's version command: { ok, version?, stalled?, exitCode?, output? }. Shows a broken install
+   * (ISE hanging at start-up) before a build does.
+   */
+  async function vendorCheck(kind) {
+    if (!vendor.KINDS.includes(kind)) return { ok: false, message: 'Unknown kind' };
+    const install = vendorInstalls()[kind][0];
+    if (!install) return { ok: false, notInstalled: true };
+    const spec = vendor.launchSpec(install.exe, VENDOR_CHECK[kind], IS_WIN);
+    if (spec.error) return { ok: false, message: spec.error };
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lds-probe-'));
+    try {
+      const r = await execute(spec.file, spec.args, tmp, {
+        timeoutMs: LIMITS.vendorCheckTimeoutMs,
+        env: vendor.vendorEnv(kind, install.exe),
+        verbatim: spec.verbatim,
+        firstOutputMs: LIMITS.vendorFirstOutputMs,
+      });
+      const output = `${r.stdout}\n${r.stderr}`.trim().slice(0, 4000);
+      if (r.stalled) return { ok: false, stalled: true, exe: install.exe };
+      if (r.spawnError || r.timedOut) return { ok: false, exe: install.exe, message: r.spawnError || 'timeout', output };
+      // vivado -version (2026.1) exits with 1 and xst -help with a non-zero code on some versions: the banner
+      // proves the program starts
+      const ok = r.exitCode === 0 || (kind === 'ise' && /Release\s+14\./i.test(output)) || (kind === 'vivado' && /^vivado v\d{4}\.\d/im.test(output));
+      const first = output.split(/\r?\n/).map((l) => l.trim()).find((l) => l !== '');
+      return { ok, exe: install.exe, version: install.version, exitCode: r.exitCode, output: ok ? first : output };
+    } finally {
+      fs.rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }, () => {});
+    }
+  }
+
+  /**
+   * The install in a folder the user picked in the main process's own dialog: { kind, exe, version } or null.
+   * Quartus folders that do not show the version are asked (quartus_sh --version), since Quartus II 13.0 and
+   * Quartus Prime cover different families.
+   */
+  async function locateVendorFolder(folder) {
+    const hit = vendor.locateInFolder(folder, IS_WIN);
+    if (!hit || hit.version || hit.kind === 'vivado' || hit.kind === 'ise') return hit;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lds-probe-'));
+    try {
+      const r = await execute(hit.exe, ['--version'], tmp, { timeoutMs: LIMITS.vendorCheckTimeoutMs, env: vendor.vendorEnv(hit.kind, hit.exe) });
+      // "Version 13.0.1 Build 232 06/12/2013 Service Pack 1 SJ Web Edition", "Version 25.1std.0 Build 1129 ..."
+      const m = /Version\s+(\d{1,4}\.\d{1,2}(?:\.\d{1,2})?)/i.exec(r.stdout || '');
+      if (!m) return hit;
+      return { ...hit, version: m[1], kind: vendor.isLegacyQuartus(m[1]) ? 'quartusLegacy' : 'quartus' };
+    } finally {
+      fs.rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }, () => {});
+    }
+  }
+
   /**
    * The program and command line a request really runs, or a tool error. Most tools run their executable with the
    * page's arguments. The openXC7 bitstream tools also get their database paths here, from the part name the
@@ -162,6 +285,7 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
    */
   async function resolveLaunch(id, args) {
     const def = TOOLS[id];
+    if (def.vendor) return resolveVendorLaunch(id, args);
     const exe = resolveExecutable(id);
     if (!exe) return toolError('unavailable', `${id} is not installed`);
     if (!def.launch) return { exe, args };
@@ -201,12 +325,23 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
     return env;
   }
 
-  /** Runs exe with args in cwd; resolves when it exits (never rejects) */
-  function execute(exe, args, cwd, { timeoutMs, runId, onLine, uninterruptible = false }) {
+  /**
+   * Runs exe with args in cwd; resolves when it exits (never rejects). env replaces the default tool environment;
+   * verbatim passes the command line as is (cmd.exe, see vendorTools.launchSpec); firstOutputMs stops a program
+   * that has printed nothing at all by then ("stalled").
+   */
+  function execute(exe, args, cwd, { timeoutMs, runId, onLine, uninterruptible = false, env, verbatim = false, firstOutputMs }) {
     return new Promise((resolve) => {
       let child;
       try {
-        child = spawn(exe, args, { cwd, env: toolEnv(exe), shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+        child = spawn(exe, args, {
+          cwd,
+          env: env || toolEnv(exe),
+          shell: false,
+          windowsHide: true,
+          windowsVerbatimArguments: verbatim,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
       } catch (err) {
         resolve({ spawnError: String(err && err.message ? err.message : err) });
         return;
@@ -217,8 +352,20 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
       const out = { stdout: [], stderr: [], bytes: { stdout: 0, stderr: 0 }, partial: { stdout: '', stderr: '' } };
       let overflow = false;
       let timedOut = false;
+      let stalled = false;
+      let stallTimer = null;
+      if (firstOutputMs) {
+        stallTimer = setTimeout(() => {
+          stalled = true;
+          killTree(child);
+        }, firstOutputMs);
+      }
 
       const collect = (stream) => (chunk) => {
+        if (stallTimer) {
+          clearTimeout(stallTimer);
+          stallTimer = null;
+        }
         if (overflow) return;
         out.bytes[stream] += chunk.length;
         if (out.bytes[stream] > LIMITS.streamBytes) {
@@ -247,6 +394,7 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        if (stallTimer) clearTimeout(stallTimer);
         if (runId) running.delete(runId);
         if (onLine) for (const s of ['stdout', 'stderr']) if (out.partial[s]) onLine(s, out.partial[s]);
         resolve({
@@ -255,6 +403,7 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
           stderr: Buffer.concat(out.stderr).toString('utf8'),
           overflow,
           timedOut,
+          stalled,
           cancelled: entry.cancelled,
         });
       };
@@ -266,6 +415,14 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
   async function probe(id) {
     if (!Object.prototype.hasOwnProperty.call(TOOLS, id)) return { available: false, reason: 'not-installed' };
     if (probeCache.has(id)) return probeCache.get(id);
+    if (TOOLS[id].vendor) {
+      // Found on disk is enough here: starting Vivado only to print its version takes many seconds (vendorCheck
+      // does that on request). Quartus counts Prime and II alike; the run picks one per part.
+      const installs = vendorInstalls();
+      const found = (id === 'quartus' ? ['quartus', 'quartusLegacy'] : [id]).flatMap((k) => installs[k]);
+      if (!found.length) return { available: false, reason: 'not-installed' };
+      return { available: true, version: found.map((f) => f.version || path.basename(path.dirname(f.exe))).join(', ').slice(0, 200) };
+    }
     const exe = resolveExecutable(id);
     let result = { available: false, reason: 'not-installed' };
     if (exe && TOOLS[id].launch === 'fasm2frames') {
@@ -361,14 +518,27 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
       // A confirmed flash write is not killed by a cancel (page reload, Cancel): openFPGALoader stopped halfway would
       // leave the board's flash half written. Its timeout still applies.
       const uninterruptible = !!confirmation && confirmation.kind === 'flashWrite';
-      return await runInFolder(launch.exe, { runId, tool, args: launch.args, fileEntries, outputList, timeoutMs, uninterruptible });
+      return await runInFolder(launch.exe, {
+        runId,
+        tool,
+        args: launch.args,
+        fileEntries,
+        outputList,
+        timeoutMs,
+        uninterruptible,
+        env: launch.env,
+        verbatim: launch.verbatim,
+        extraFiles: launch.extraFiles,
+        appendFiles: launch.appendFiles,
+        firstOutputMs: launch.firstOutputMs,
+      });
     } finally {
       if (exclusive) busyTools.delete(tool);
     }
   }
 
   /** Writes the inputs to a fresh temporary folder, runs the tool there and reads back the named outputs */
-  async function runInFolder(exe, { runId, args, fileEntries, outputList, timeoutMs, uninterruptible }) {
+  async function runInFolder(exe, { runId, args, fileEntries, outputList, timeoutMs, uninterruptible, env, verbatim, extraFiles, appendFiles, firstOutputMs }) {
     const started = Date.now();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lds-tool-'));
     try {
@@ -377,6 +547,18 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
         if (!full) return toolError('bad-request', `Unsafe file path: ${rel}`);
         fs.mkdirSync(path.dirname(full), { recursive: true });
         fs.writeFileSync(full, typeof data === 'string' ? data : Buffer.from(data));
+      }
+      // Files of the main process's own templates (a vendor tool's script): never one of the page's files
+      for (const [rel, text] of Object.entries(extraFiles || {})) {
+        const full = inside(dir, rel);
+        if (!full || fileEntries.some(([name]) => name.toLowerCase() === rel.toLowerCase())) return toolError('bad-request', `Reserved file name: ${rel}`);
+        fs.writeFileSync(full, text);
+      }
+      // Fixed lines of a template added to one of the page's (already checked) files: the Quartus .qsf
+      for (const [rel, text] of Object.entries(appendFiles || {})) {
+        const full = inside(dir, rel);
+        if (!full || !fileEntries.some(([name]) => name === rel)) return toolError('bad-request', `Missing file: ${rel}`);
+        fs.appendFileSync(full, text);
       }
       // Tools rarely create missing folders, so the folders of the requested outputs exist before the run.
       for (const rel of outputList) {
@@ -398,11 +580,12 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
         if (!flushTimer) flushTimer = setTimeout(flush, 100);
       };
 
-      const r = await execute(exe, args, dir, { timeoutMs, runId, onLine, uninterruptible });
+      const r = await execute(exe, args, dir, { timeoutMs, runId, onLine, uninterruptible, env, verbatim, firstOutputMs });
       if (flushTimer) clearTimeout(flushTimer);
       flush();
 
       if (r.cancelled) return toolError('cancelled', 'Cancelled');
+      if (r.stalled) return toolError('stalled', `No output for ${Math.round(firstOutputMs / 1000)} s after the start: the program hung while starting`);
       if (r.timedOut) return toolError('timeout', `Stopped after ${timeoutMs} ms`);
       if (r.overflow) return toolError('output-limit', 'Too much output');
       if (r.spawnError) return toolError('internal', r.spawnError);
@@ -443,7 +626,7 @@ function createToolRunner({ readSettings, onProgress, confirmRun }) {
     for (const id of [...running.keys(), ...confirming.keys()]) cancel(id);
   }
 
-  return { probe, run, cancel, cancelAll, resetProbes };
+  return { probe, run, cancel, cancelAll, resetProbes, vendorStatus, vendorCheck, locateVendorFolder };
 }
 
 module.exports = { createToolRunner, TOOLS, isSafeRelativePath };

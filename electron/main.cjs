@@ -205,6 +205,38 @@ ipcMain.handle('lds-tool:probe', (e, tool) => (fromAppFrame(e) ? tools.probe(Str
 ipcMain.handle('lds-tool:run', (e, req) => (fromAppFrame(e) ? tools.run(req) : { error: { kind: 'bad-request', message: 'Not from the app page' } }));
 ipcMain.handle('lds-tool:cancel', (e, runId) => (fromAppFrame(e) ? tools.cancel(String(runId)) : false));
 
+// Vendor FPGA tools (Aşama 6k-1): which installs were found, a version check, and the "where is it" setting. The
+// page never sends a path: it asks this process to open its own folder dialog, and only a folder that holds a
+// known vendor executable is stored (settings.vendorPaths).
+const VENDOR_KINDS = ['vivado', 'quartus', 'quartusLegacy', 'ise'];
+ipcMain.handle('lds-tool:vendor-status', (e) => (fromAppFrame(e) ? tools.vendorStatus() : null));
+ipcMain.handle('lds-tool:vendor-check', (e, kind) => (fromAppFrame(e) ? tools.vendorCheck(String(kind)) : { ok: false }));
+ipcMain.handle('lds-tool:vendor-choose', async (e) => {
+  if (!fromAppFrame(e) || !mainWindow || mainWindow.isDestroyed()) return { cancelled: true };
+  const en = (await pageLanguage()) === 'en';
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: en ? 'Folder of Vivado, Quartus or ISE' : 'Vivado, Quartus veya ISE klasörü',
+    properties: ['openDirectory', 'dontAddToRecent'],
+  });
+  if (canceled || !filePaths || !filePaths[0]) return { cancelled: true };
+  const hit = await tools.locateVendorFolder(filePaths[0]);
+  if (!hit) return { notFound: true };
+  const current = readSettings().vendorPaths;
+  writeSettings({ vendorPaths: { ...(current && typeof current === 'object' ? current : {}), [hit.kind]: { exe: hit.exe, version: hit.version } } });
+  tools.resetProbes();
+  return { kind: hit.kind, exe: hit.exe, version: hit.version };
+});
+ipcMain.handle('lds-tool:vendor-clear', (e, kind) => {
+  if (!fromAppFrame(e) || !VENDOR_KINDS.includes(kind)) return false;
+  const current = readSettings().vendorPaths;
+  if (!current || typeof current !== 'object' || !Object.prototype.hasOwnProperty.call(current, kind)) return false;
+  const next = { ...current };
+  delete next[kind];
+  writeSettings({ vendorPaths: next });
+  tools.resetProbes();
+  return true;
+});
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,

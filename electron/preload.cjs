@@ -52,5 +52,10 @@ contextBridge.exposeInMainWorld('ldsTool', {
       timeoutMs: Number(req && req.timeoutMs) || 0,
     }),
   cancel: (runId) => ipcRenderer.invoke('lds-tool:cancel', String(runId)),
+  // Vendor FPGA tools (Aşama 6k-1): no path crosses from the page; "choose" opens the main process's folder dialog
+  vendorStatus: () => ipcRenderer.invoke('lds-tool:vendor-status'),
+  vendorCheck: (kind) => ipcRenderer.invoke('lds-tool:vendor-check', String(kind)),
+  vendorChoose: () => ipcRenderer.invoke('lds-tool:vendor-choose'),
+  vendorClear: (kind) => ipcRenderer.invoke('lds-tool:vendor-clear', String(kind)),
   onProgress: listen('lds-tool:progress', (cb, p) => cb(p.runId, p.progress)),
 });
