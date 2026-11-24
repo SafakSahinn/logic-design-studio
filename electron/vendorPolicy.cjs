@@ -12,6 +12,9 @@
 //   ise     --step map      --part ... --top top                            (reads top.ngd)
 //   ise     --step par      --top top                                       (reads top_map.ncd, top.pcf)
 //   ise     --step bitgen   --top top                                       (reads top.ncd, top.pcf)
+//   ise     --step cpldfit  --part xc2c64-5-vq44 --top top                  (CoolRunner / XC9500: reads top.ngd)
+//   ise     --step hprep6   --top top                                       (reads top.vm6, writes top.jed)
+//   ise     --step program  --part xc3s100e-4-cp132 --position 1 --bitstream design.bit  (or a CPLD's design.jed)
 //
 // The main process turns that line into the real script and command line from fixed templates (vendorScripts.cjs).
 // Every value that ends up inside a script is checked here against a character set with no Tcl, cmd or shell
@@ -37,6 +40,10 @@ const VIVADO_PART_RE = /^xc7[aksz]\d{1,3}t?s?[a-z]{2,5}\d{3,4}-[1-3]L?$/;
 const QUARTUS_PART_RE = /^(?:EP[0-9A-Z]{4,20}|EPM[0-9A-Z]{4,20}(?:-[0-9]{1,2})?|5[A-Z][0-9A-Z]{4,20}|10[A-Z][0-9A-Z]{4,20})$/;
 /** ISE device-speed-package: xc6slx9-2-tqg144, xc3s100e-4-cp132, xc3s5000-5-fg676, xc2c64a-5-vq44 */
 const ISE_PART_RE = /^xc(?:3s[0-9]{2,4}(?:e|a|an|adsp)?|6slx[0-9]{1,3}t?|2c[0-9]{2,3}a?|95[0-9]{2,3}(?:xl|xv)?)-[1-5]l?-[a-z]{2,4}[0-9]{2,4}$/i;
+/** The ISE CPLDs (CoolRunner-II, XC9500): fitted with cpldfit, programmed from a .jed; the rest are FPGAs (.bit) */
+const ISE_CPLD_RE = /^xc(?:2c|95)/i;
+/** A device's position in the JTAG chain (iMPACT counts from 1; the board files' JTAGPos) */
+const POSITION_RE = /^(?:[1-9]|1[0-6])$/;
 
 const HDL_EXT = /\.(v|sv|vhd|vhdl)$/i;
 /**
@@ -59,6 +66,10 @@ const STEPS = {
     map: { part: true, top: true, reads: (top) => [`${top}.ngd`] },
     par: { top: true, reads: (top) => [`${top}_map.ncd`, `${top}.pcf`] },
     bitgen: { top: true, reads: (top) => [`${top}.ncd`, `${top}.pcf`] },
+    cpldfit: { part: true, top: true, reads: (top) => [`${top}.ngd`] },
+    hprep6: { top: true, reads: (top) => [`${top}.vm6`] },
+    // iMPACT: a .bit into an FPGA's SRAM, a .jed into a CPLD's own memory (vendorScripts.iseProgram)
+    program: { part: true, position: true, bitstream: /\.(bit|jed)$/i },
   },
 };
 const PART_RULE = { vivado: VIVADO_PART_RE, quartus: QUARTUS_PART_RE, ise: ISE_PART_RE };
@@ -66,7 +77,7 @@ const PART_RULE = { vivado: VIVADO_PART_RE, quartus: QUARTUS_PART_RE, ise: ISE_P
 const INPUT_EXT = {
   vivado: /\.(v|sv|vh|svh|vhd|vhdl|xdc|hex|mem|txt)$/i,
   quartus: /\.(v|sv|vh|svh|vhd|vhdl|qsf|hex|mem|txt|mif)$/i,
-  ise: /\.(v|vh|vhd|vhdl|ucf|hex|mem|txt|ngc|ngd|ncd|pcf)$/i,
+  ise: /\.(v|vh|vhd|vhdl|ucf|hex|mem|txt|ngc|ngd|ncd|pcf|vm6)$/i,
 };
 
 const isVendorTool = (tool) => Object.prototype.hasOwnProperty.call(STEPS, tool);
@@ -78,8 +89,8 @@ const isVendorTool = (tool) => Object.prototype.hasOwnProperty.call(STEPS, tool)
 function parseVendorArgs(tool, args) {
   if (!isVendorTool(tool)) return deny('Not a vendor tool');
   if (!Array.isArray(args)) return deny(`${tool}: bad arguments`);
-  const out = { step: null, part: null, top: null, sources: [], constraints: null, bitstream: null };
-  const single = { '--step': 'step', '--part': 'part', '--top': 'top', '--constraints': 'constraints', '--bitstream': 'bitstream' };
+  const out = { step: null, part: null, top: null, sources: [], constraints: null, bitstream: null, position: null };
+  const single = { '--step': 'step', '--part': 'part', '--top': 'top', '--constraints': 'constraints', '--bitstream': 'bitstream', '--position': 'position' };
   for (let i = 0; i < args.length; i++) {
     const opt = args[i];
     const value = args[i + 1];
@@ -111,6 +122,15 @@ function parseVendorArgs(tool, args) {
   if (spec.bitstream) {
     if (!out.bitstream || !FILE_RE.test(out.bitstream) || !spec.bitstream.test(out.bitstream)) return deny(`${tool} --bitstream: expects a bitstream file name`);
   } else if (out.bitstream !== null) return deny(`${tool} ${out.step}: --bitstream is not used`);
+  if (spec.position) {
+    if (!out.position || !POSITION_RE.test(out.position)) return deny(`${tool} --position: expects a JTAG chain position 1 to 16`);
+  } else if (out.position !== null) return deny(`${tool} ${out.step}: --position is not used`);
+  // ISE: an FPGA step for an FPGA part, a CPLD step for a CPLD part; a CPLD gets a .jed, an FPGA a .bit
+  if (tool === 'ise' && out.part !== null) {
+    const cpld = ISE_CPLD_RE.test(out.part);
+    if (cpld ? out.step === 'map' : out.step === 'cpldfit') return deny(`ise ${out.step}: not a step for ${out.part}`);
+    if (out.step === 'program' && cpld !== /\.jed$/i.test(out.bitstream)) return deny(`ise program: ${cpld ? 'a CPLD takes a .jed file' : 'an FPGA takes a .bit file'}`);
+  }
   // Quartus reads the settings of revision <top> from <top>.qsf
   if (tool === 'quartus' && spec.constraints && out.constraints !== `${out.top}.qsf`) return deny('quartus --constraints: must be <top>.qsf');
   out.reads = spec.reads ? spec.reads(out.top) : [];
@@ -227,8 +247,59 @@ function isQuartusProgrammingFile(name, data) {
   return data[0] === magic.charCodeAt(0) && data[1] === magic.charCodeAt(1) && data[2] === magic.charCodeAt(2) && data[3] === 0;
 }
 
-/** Whether a programming run's file is what its tool loads onto a board */
-const isProgrammingFile = (tool, name, data) => (tool === 'vivado' ? isXilinxBitFile(data) : tool === 'quartus' ? isQuartusProgrammingFile(name, data) : false);
+/**
+ * The device a .bit file is for, from its header's "b" field ("3s100ecp132", "6slx9tqg144": die and package
+ * without "xc" and the speed grade), or null. The fields after the fixed start: "a" design name, "b" part, each
+ * with a 2-byte big-endian length.
+ */
+function xilinxBitPart(data) {
+  if (!isXilinxBitFile(data)) return null;
+  let at = BIT_HEADER.length - 1;
+  for (const key of [0x61, 0x62]) {
+    if (data[at] !== key || at + 3 > data.length) return null;
+    const len = (data[at + 1] << 8) | data[at + 2];
+    const start = at + 3;
+    if (len < 1 || len > 256 || start + len > data.length) return null;
+    if (key === 0x62) return Buffer.from(data.subarray(start, start + len - 1)).toString('latin1').replace(/\0+$/, '');
+    at = start + len;
+  }
+  return null;
+}
+
+/** An ISE FPGA bitstream for the part xc6slx9-2-tqg144: its header names the device 6slx9tqg144 */
+function isIseBitFile(part, data) {
+  const m = /^xc([a-z0-9]+)-[1-5]l?-([a-z]{2,4}[0-9]{2,4})$/i.exec(String(part));
+  const found = xilinxBitPart(data);
+  return !!m && found !== null && found.toLowerCase() === `${m[1]}${m[2]}`.toLowerCase();
+}
+
+const MAX_JED_BYTES = 4 * 1024 * 1024;
+/**
+ * A JEDEC fuse file as hprep6 writes it for the part: plain ASCII text, the fuse data between STX (0x02) and ETX
+ * (0x03), a QF fuse count and the "N DEVICE <part>*" note naming the same device (XC2C64-5-VQ44).
+ */
+function isJedecFile(part, data) {
+  if (!(data instanceof Uint8Array) || data.length < 64 || data.length > MAX_JED_BYTES) return false;
+  for (const c of data) if (!(c === 2 || c === 3 || c === 9 || c === 10 || c === 13 || (c >= 32 && c < 127))) return false;
+  const text = Buffer.from(data).toString('latin1');
+  const stx = text.indexOf('\x02');
+  const etx = text.indexOf('\x03');
+  if (stx < 0 || etx < stx || text.indexOf('\x02', stx + 1) >= 0) return false;
+  // The fields between STX and ETX, each ending in "*" (the first one right after STX)
+  const body = text.slice(stx + 1, etx);
+  const device = /\*\s*N DEVICE ([A-Za-z0-9-]{4,32})\s*\*/.exec(body);
+  return /(?:^|\*)\s*QF[0-9]{1,8}\s*\*/.test(body) && !!device && device[1].toUpperCase() === String(part).toUpperCase();
+}
+
+/** Whether a programming run's file is what its tool loads onto the request's device */
+function isProgrammingFile(tool, request, data) {
+  const name = request.bitstream;
+  if (tool === 'vivado') return isXilinxBitFile(data);
+  if (tool === 'quartus') return isQuartusProgrammingFile(name, data);
+  if (tool === 'ise') return /\.jed$/i.test(name) ? isJedecFile(request.part, data) : isIseBitFile(request.part, data);
+  return false;
+}
+const PROGRAMMING_FILE_NAME = { vivado: 'Xilinx bitstream', quartus: 'Quartus programming file', ise: 'ISE programming file for this device' };
 
 /**
  * { ok: true, request } or a denial for a vendor tool request. files is the page's file map; it may hold only the
@@ -242,7 +313,7 @@ function checkVendorRequest(tool, args, files) {
   if (request.bitstream) {
     // A programming run gets the bitstream and nothing else, and it must be the tool's own file type
     if (names.length !== 1 || names[0] !== request.bitstream) return deny(`${tool} ${request.step}: only the file ${request.bitstream} is sent`);
-    if (!isProgrammingFile(tool, request.bitstream, files[request.bitstream])) return deny(`${tool}: ${request.bitstream} is not a ${tool === 'vivado' ? 'Xilinx bitstream' : 'Quartus programming file'}`);
+    if (!isProgrammingFile(tool, request, files[request.bitstream])) return deny(`${tool}: ${request.bitstream} is not a ${PROGRAMMING_FILE_NAME[tool]}`);
     return { ok: true, request };
   }
   for (const name of names) {
@@ -269,9 +340,13 @@ module.exports = {
   VIVADO_PART_RE,
   QUARTUS_PART_RE,
   ISE_PART_RE,
+  ISE_CPLD_RE,
+  POSITION_RE,
   isVendorTool,
   parseVendorArgs,
   checkConstraintFile,
   checkVendorRequest,
   isQuartusProgrammingFile,
+  xilinxBitPart,
+  isJedecFile,
 };

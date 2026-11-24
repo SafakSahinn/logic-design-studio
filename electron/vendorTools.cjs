@@ -16,7 +16,8 @@ const os = require('os');
 const path = require('path');
 
 const KINDS = ['vivado', 'quartus', 'quartusLegacy', 'ise'];
-const ISE_PROGRAMS = ['xst', 'ngdbuild', 'map', 'par', 'bitgen'];
+// The FPGA chain, the CPLD chain (cpldfit, hprep6) and the programmer (impact): all part of every ISE install
+const ISE_PROGRAMS = ['xst', 'ngdbuild', 'map', 'par', 'bitgen', 'cpldfit', 'hprep6', 'impact'];
 
 function isFile(p) {
   try {

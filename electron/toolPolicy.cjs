@@ -463,6 +463,12 @@ function confirmationFor(tool, args) {
     if (parsed.ok && parsed.request.step === 'program' && /\.pof$/i.test(parsed.request.bitstream)) return { kind: 'cpldWrite', file: parsed.request.bitstream };
     return null;
   }
+  // iMPACT writing a .jed: a CoolRunner / XC9500 CPLD's own memory, the same way
+  if (tool === 'ise') {
+    const parsed = parseVendorArgs('ise', args);
+    if (parsed.ok && parsed.request.step === 'program' && /\.jed$/i.test(parsed.request.bitstream)) return { kind: 'cpldWrite', file: parsed.request.bitstream };
+    return null;
+  }
   if (tool !== 'openfpgaloader' || !Array.isArray(args)) return null;
   if (!args.some((a) => OPENFPGALOADER_FLASH.has(a))) return null;
   const bitstreams = loaderBitstreams(args);

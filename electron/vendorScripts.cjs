@@ -7,7 +7,7 @@
 // command. Generated file names start with "lds_" or are <top>.qpf: types the page may not send.
 'use strict';
 
-const { IDENT_RE, FILE_RE, VIVADO_PART_RE, QUARTUS_PART_RE, ISE_PART_RE } = require('./vendorPolicy.cjs');
+const { IDENT_RE, FILE_RE, VIVADO_PART_RE, QUARTUS_PART_RE, ISE_PART_RE, ISE_CPLD_RE, POSITION_RE } = require('./vendorPolicy.cjs');
 
 /** A value for a template, or an exception: the policy should have refused it already */
 function word(value, re) {
@@ -147,8 +147,38 @@ function quartusProgram(req) {
   return { program: 'quartus_pgm', files: {}, args: ['-c', '1', '-m', 'JTAG', '-o', `p;${file}`] };
 }
 
+/**
+ * iMPACT boundary-scan batch: find the cable (setCable -port auto: a Xilinx Platform Cable USB or a parallel
+ * cable), identify the JTAG chain, assign the file to the device at the board's chain position and program it. A
+ * .bit goes into an FPGA's SRAM; a .jed is erased, written and verified in a CPLD's own memory (-e -v). iMPACT
+ * checks the file's device against the one it finds at that position. The page sends only the part, the
+ * position and the file name; iMPACT stops at the first failing command and exits non-zero (a missing cable:
+ * "Cable autodetection failed.", exit code 1), and it leaves no process running.
+ */
+function iseProgram(req) {
+  word(req.part, ISE_PART_RE);
+  const position = word(req.position, POSITION_RE);
+  const file = word(req.bitstream, FILE_RE);
+  const jed = /\.jed$/i.test(file);
+  if (!jed && !/\.bit$/i.test(file)) throw new Error(`Template value refused: ${file}`);
+  if (jed !== ISE_CPLD_RE.test(req.part)) throw new Error(`Template value refused: ${file}`);
+  const lines = [
+    'setMode -bs',
+    'setCable -port auto',
+    'Identify -inferir',
+    'identifyMPM',
+    `assignFile -p ${position} -file "${file}"`,
+    jed ? `Program -p ${position} -e -v` : `Program -p ${position}`,
+    'quit',
+    '',
+  ];
+  return { program: 'impact', files: { 'lds_impact.cmd': lines.join('\n') }, args: ['-batch', 'lds_impact.cmd'] };
+}
+
 /** One step of the ISE FPGA chain, as ISE's own process "Generate Programming File" runs them */
 function iseStep(req) {
+  // Programming names no top level
+  if (req.step === 'program') return iseProgram(req);
   const top = word(req.top, IDENT_RE);
   const part = req.part === null ? null : word(req.part, ISE_PART_RE);
   switch (req.step) {
@@ -170,6 +200,12 @@ function iseStep(req) {
       return { program: 'par', files: {}, args: ['-w', `${top}_map.ncd`, `${top}.ncd`, `${top}.pcf`] };
     case 'bitgen':
       return { program: 'bitgen', files: {}, args: ['-w', `${top}.ncd`, `${top}.bit`, `${top}.pcf`] };
+    // The CPLD chain (CoolRunner-II, XC9500), as ISE's "Generate Programming File" for a CPLD: cpldfit fits the
+    // translated design and writes <top>.vm6, hprep6 turns that into the JEDEC fuse file <top>.jed
+    case 'cpldfit':
+      return { program: 'cpldfit', files: {}, args: ['-p', part, `${top}.ngd`] };
+    case 'hprep6':
+      return { program: 'hprep6', files: {}, args: ['-s', 'IEEE1149', '-n', top, '-i', top] };
     default:
       throw new Error(`Unknown ISE step ${req.step}`);
   }
@@ -185,4 +221,4 @@ function scriptFor(tool, req) {
   throw new Error(`No template for ${tool} ${req.step}`);
 }
 
-module.exports = { scriptFor, vivadoBuild, vivadoProgram, vivadoDie, quartusCompile, quartusProgram, iseStep };
+module.exports = { scriptFor, vivadoBuild, vivadoProgram, vivadoDie, quartusCompile, quartusProgram, iseStep, iseProgram };

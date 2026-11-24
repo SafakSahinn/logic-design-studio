@@ -163,7 +163,8 @@ const CONFIRM_TEXT = {
       buttons: ['Flash’a yaz', 'İptal'],
     },
   },
-  // quartus_pgm writing a .pof into a CPLD (MAX 7000, MAX II / V): the chip keeps it, there is no SRAM load
+  // quartus_pgm writing a .pof into a CPLD (MAX 7000, MAX II / V), iMPACT a .jed (CoolRunner-II, XC9500): the chip
+  // keeps it, there is no SRAM load
   cpldWrite: {
     en: {
       title: 'Program the CPLD',
