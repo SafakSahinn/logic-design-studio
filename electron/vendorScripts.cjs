@@ -49,6 +49,72 @@ function vivadoBuild(req) {
   };
 }
 
+/** The die of a checked 7-series part: xc7a35tcpg236-1 -> xc7a35t, xc7z007sclg225-1 -> xc7z007s */
+function vivadoDie(part) {
+  const m = /^(xc7[aksz]\d{1,3}t?s?)[a-z]{2,5}\d{3,4}-[1-3]L?$/.exec(word(part, VIVADO_PART_RE));
+  if (!m) throw new Error(`Template value refused: ${part}`);
+  return m[1];
+}
+
+/**
+ * Vivado hardware manager: load a bitstream into the SRAM of the board's FPGA over JTAG. connect_hw_server without
+ * a URL connects to localhost:3121 and starts the hw_server bundled with this Vivado when none runs there; the page
+ * never names a server. Every JTAG target is opened in turn and the first one whose chain holds a device of the
+ * part's die is programmed, so another board on another cable is never touched. The "LDS-ERROR:" lines are read by
+ * the page (src/fpga/flow/program.ts classifyVivadoProgramOutput); each has its own exit code.
+ *
+ * Vivado leaves the hw_server it started running after it exits (as its GUI does); that server keeps the cable
+ * open, so openFPGALoader cannot use the same cable until hw_server ends.
+ */
+function vivadoProgram(req) {
+  const die = vivadoDie(req.part);
+  const bit = word(req.bitstream, FILE_RE);
+  const lines = [
+    HEADER,
+    'open_hw_manager',
+    'connect_hw_server',
+    'set lds_targets [get_hw_targets -quiet]',
+    'if {[llength $lds_targets] == 0} {',
+    '  puts "LDS-ERROR: no hardware target (no JTAG cable found)"',
+    '  exit 3',
+    '}',
+    'set lds_device {}',
+    'set lds_seen 0',
+    'foreach lds_target $lds_targets {',
+    '  if {[catch {open_hw_target $lds_target} lds_message]} {',
+    '    puts "LDS-INFO: cannot open $lds_target: $lds_message"',
+    '    continue',
+    '  }',
+    '  set lds_all [get_hw_devices -quiet]',
+    '  incr lds_seen [llength $lds_all]',
+    `  set lds_device [lindex [get_hw_devices -quiet -filter {PART =~ "${die}*"}] 0]`,
+    '  if {$lds_device ne {}} { break }',
+    '  puts "LDS-INFO: $lds_target holds: $lds_all"',
+    '  close_hw_target $lds_target',
+    '}',
+    'if {$lds_device eq {}} {',
+    '  if {$lds_seen == 0} {',
+    '    puts "LDS-ERROR: no FPGA on the chain (is the board powered?)"',
+    '    exit 4',
+    '  }',
+    `  puts "LDS-ERROR: no matching FPGA: no ${die} on any JTAG chain"`,
+    '  exit 5',
+    '}',
+    'puts "LDS-INFO: programming $lds_device"',
+    'current_hw_device $lds_device',
+    `set_property PROGRAM.FILE {${bit}} $lds_device`,
+    'set_property PROBES.FILE {} $lds_device',
+    'program_hw_devices $lds_device',
+    'close_hw_target',
+    'exit 0',
+    '',
+  ];
+  return {
+    files: { 'lds_program.tcl': lines.join('\n') },
+    args: ['-mode', 'batch', '-nojournal', '-nolog', '-notrace', '-source', 'lds_program.tcl'],
+  };
+}
+
 /**
  * Quartus full compile (analysis, fitter, assembler, timing) of revision <top>: the page's <top>.qsf holds the
  * device, sources and pins (checked line by line); the project file is written here, and one fixed line is
@@ -98,9 +164,10 @@ function iseStep(req) {
 /** { program?, files, args } of a checked request; program is the ISE executable of the step */
 function scriptFor(tool, req) {
   if (tool === 'vivado' && req.step === 'build') return vivadoBuild(req);
+  if (tool === 'vivado' && req.step === 'program') return vivadoProgram(req);
   if (tool === 'quartus' && req.step === 'compile') return quartusCompile(req);
   if (tool === 'ise') return iseStep(req);
   throw new Error(`No template for ${tool} ${req.step}`);
 }
 
-module.exports = { scriptFor, vivadoBuild, quartusCompile, iseStep };
+module.exports = { scriptFor, vivadoBuild, vivadoProgram, vivadoDie, quartusCompile, iseStep };

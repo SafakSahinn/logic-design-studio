@@ -4,6 +4,7 @@
 // short option line that names a step, a part, a top-level name and files:
 //
 //   vivado  --step build    --part xc7a35tcpg236-1 --top top --source top.v ... --constraints top.xdc
+//   vivado  --step program  --part xc7a35tcpg236-1 --bitstream design.bit   (the only file sent: a .bit)
 //   quartus --step compile  --part EP4CE22F17C6    --top top --source top.v ... --constraints top.qsf
 //   ise     --step xst      --part xc6slx9-2-tqg144 --top top --source top.v ...
 //   ise     --step ngdbuild --part ... --top top --constraints top.ucf      (reads top.ngc)
@@ -37,8 +38,15 @@ const QUARTUS_PART_RE = /^(?:EP[0-9A-Z]{4,20}|EPM[0-9A-Z]{4,20}(?:-[0-9]{1,2})?|
 const ISE_PART_RE = /^xc(?:3s[0-9]{2,4}(?:e|a|an|adsp)?|6slx[0-9]{1,3}t?|2c[0-9]{2,3}a?|95[0-9]{2,3}(?:xl|xv)?)-[1-5]l?-[a-z]{2,4}[0-9]{2,4}$/i;
 
 const HDL_EXT = /\.(v|sv|vhd|vhdl)$/i;
+/**
+ * Per tool and step what the option line must hold. bitstream: the step loads that file onto a board and gets no
+ * other file (vivado program: SRAM over JTAG through Vivado's own hw_server, see vendorScripts.vivadoProgram).
+ */
 const STEPS = {
-  vivado: { build: { part: true, top: true, sources: true, constraints: /\.xdc$/i } },
+  vivado: {
+    build: { part: true, top: true, sources: true, constraints: /\.xdc$/i },
+    program: { part: true, bitstream: /\.bit$/i },
+  },
   quartus: { compile: { part: true, top: true, sources: true, constraints: /\.qsf$/i } },
   ise: {
     xst: { part: true, top: true, sources: true },
@@ -65,8 +73,8 @@ const isVendorTool = (tool) => Object.prototype.hasOwnProperty.call(STEPS, tool)
 function parseVendorArgs(tool, args) {
   if (!isVendorTool(tool)) return deny('Not a vendor tool');
   if (!Array.isArray(args)) return deny(`${tool}: bad arguments`);
-  const out = { step: null, part: null, top: null, sources: [], constraints: null };
-  const single = { '--step': 'step', '--part': 'part', '--top': 'top', '--constraints': 'constraints' };
+  const out = { step: null, part: null, top: null, sources: [], constraints: null, bitstream: null };
+  const single = { '--step': 'step', '--part': 'part', '--top': 'top', '--constraints': 'constraints', '--bitstream': 'bitstream' };
   for (let i = 0; i < args.length; i++) {
     const opt = args[i];
     const value = args[i + 1];
@@ -95,6 +103,9 @@ function parseVendorArgs(tool, args) {
   if (spec.constraints) {
     if (!out.constraints || !FILE_RE.test(out.constraints) || !spec.constraints.test(out.constraints)) return deny(`${tool} --constraints: expects a constraint file name`);
   } else if (out.constraints !== null) return deny(`${tool} ${out.step}: --constraints is not used`);
+  if (spec.bitstream) {
+    if (!out.bitstream || !FILE_RE.test(out.bitstream) || !spec.bitstream.test(out.bitstream)) return deny(`${tool} --bitstream: expects a bitstream file name`);
+  } else if (out.bitstream !== null) return deny(`${tool} ${out.step}: --bitstream is not used`);
   // Quartus reads the settings of revision <top> from <top>.qsf
   if (tool === 'quartus' && out.constraints !== `${out.top}.qsf`) return deny('quartus --constraints: must be <top>.qsf');
   out.reads = spec.reads ? spec.reads(out.top) : [];
@@ -189,6 +200,17 @@ function checkConstraintFile(tool, name, data, request) {
 }
 
 /**
+ * The header every .bit file starts with (a 9-byte field 0ff0 0ff0 0ff0 0ff0 00, then the "a" field); Vivado's
+ * write_bitstream and xc7frames2bit both write it. Anything else is not loaded onto a board.
+ */
+const BIT_HEADER = Uint8Array.from([0x00, 0x09, 0x0f, 0xf0, 0x0f, 0xf0, 0x0f, 0xf0, 0x0f, 0xf0, 0x00, 0x00, 0x01, 0x61]);
+const MAX_BIT_BYTES = 64 * 1024 * 1024;
+function isXilinxBitFile(data) {
+  if (!(data instanceof Uint8Array) || data.length < 64 || data.length > MAX_BIT_BYTES) return false;
+  return BIT_HEADER.every((b, i) => data[i] === b);
+}
+
+/**
  * { ok: true, request } or a denial for a vendor tool request. files is the page's file map; it may hold only the
  * tool's file types, all as plain names in the run folder, and must hold every file the step reads.
  */
@@ -197,6 +219,12 @@ function checkVendorRequest(tool, args, files) {
   if (!parsed.ok) return parsed;
   const request = parsed.request;
   const names = Object.keys(files || {});
+  if (request.bitstream) {
+    // A programming run gets the bitstream and nothing else, and it must be a Xilinx bitstream file
+    if (names.length !== 1 || names[0] !== request.bitstream) return deny(`${tool} ${request.step}: only the file ${request.bitstream} is sent`);
+    if (!isXilinxBitFile(files[request.bitstream])) return deny(`${tool}: ${request.bitstream} is not a Xilinx bitstream`);
+    return { ok: true, request };
+  }
   for (const name of names) {
     if (!FILE_RE.test(name) || !INPUT_EXT[tool].test(name)) return deny(`${tool}: the file ${name} is not allowed`);
   }

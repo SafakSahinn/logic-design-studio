@@ -215,6 +215,8 @@ function createToolRunner({ readSettings, onProgress, confirmRun, limits }) {
       appendFiles: script.append,
       firstOutputMs: LIMITS.vendorFirstOutputMs,
       install: { kind: install.kind, version: install.version },
+      // A board-programming step holds the JTAG cable: one at a time, like openFPGALoader
+      exclusiveKey: parsed.request.bitstream ? `${tool}:${parsed.request.step}` : null,
     };
   }
 
@@ -493,9 +495,11 @@ function createToolRunner({ readSettings, onProgress, confirmRun, limits }) {
     if (reserve.cancelled) return toolError('cancelled', 'Cancelled');
     if (launch.error) return launch;
 
-    const exclusive = TOOLS[tool].exclusive === true;
-    if (exclusive && busyTools.has(tool)) return toolError('busy', `${tool} is already running`);
-    if (exclusive) busyTools.add(tool);
+    // Exclusive tools (openFPGALoader) run one at a time; a vendor tool only for its programming step
+    const busyKey = TOOLS[tool].exclusive === true ? tool : launch.exclusiveKey || null;
+    const exclusive = busyKey !== null;
+    if (exclusive && busyTools.has(busyKey)) return toolError('busy', `${busyKey} is already running`);
+    if (exclusive) busyTools.add(busyKey);
     try {
       const confirmation = confirmationFor(tool, args);
       if (confirmation) {
@@ -533,7 +537,7 @@ function createToolRunner({ readSettings, onProgress, confirmRun, limits }) {
         firstOutputMs: launch.firstOutputMs,
       });
     } finally {
-      if (exclusive) busyTools.delete(tool);
+      if (exclusive) busyTools.delete(busyKey);
     }
   }
 
