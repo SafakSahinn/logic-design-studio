@@ -18,7 +18,7 @@
 
 const { isSafeRelativePath } = require('./pathRules.cjs');
 const { PART_RE } = require('./openxc7.cjs');
-const { checkVendorRequest } = require('./vendorPolicy.cjs');
+const { checkVendorRequest, parseVendorArgs } = require('./vendorPolicy.cjs');
 
 const deny = (message) => ({ ok: false, message });
 const OK = { ok: true };
@@ -457,6 +457,12 @@ function checkOpenFpgaLoader(args, files) {
  * "--detect -f" only lists the flash and is not a write.
  */
 function confirmationFor(tool, args) {
+  // quartus_pgm writing a .pof: a CPLD's own non-volatile memory (it keeps the design and replaces the old one)
+  if (tool === 'quartus') {
+    const parsed = parseVendorArgs('quartus', args);
+    if (parsed.ok && parsed.request.step === 'program' && /\.pof$/i.test(parsed.request.bitstream)) return { kind: 'cpldWrite', file: parsed.request.bitstream };
+    return null;
+  }
   if (tool !== 'openfpgaloader' || !Array.isArray(args)) return null;
   if (!args.some((a) => OPENFPGALOADER_FLASH.has(a))) return null;
   const bitstreams = loaderBitstreams(args);

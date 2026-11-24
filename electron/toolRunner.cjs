@@ -519,9 +519,9 @@ function createToolRunner({ readSettings, onProgress, confirmRun, limits }) {
         if (gate.cancelled) return toolError('cancelled', 'Cancelled');
         if (!yes) return toolError('cancelled', 'Declined by the user');
       }
-      // A confirmed flash write is not killed by a cancel (page reload, Cancel): openFPGALoader stopped halfway would
-      // leave the board's flash half written. Its timeout still applies.
-      const uninterruptible = !!confirmation && confirmation.kind === 'flashWrite';
+      // A confirmed flash or CPLD write is not killed by a cancel (page reload, Cancel): a programmer stopped halfway
+      // would leave the board's flash (or the CPLD) half written. Its timeout still applies.
+      const uninterruptible = !!confirmation && (confirmation.kind === 'flashWrite' || confirmation.kind === 'cpldWrite');
       return await runInFolder(launch.exe, {
         runId,
         tool,

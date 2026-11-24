@@ -147,19 +147,38 @@ const tools = createToolRunner({
 
 // Texts of the main-process confirmation; the page's language setting only picks between them.
 const CONFIRM_TEXT = {
-  en: {
-    title: 'Write to FPGA flash',
-    message: 'Write the bitstream to the board’s flash memory?',
-    detail: (file, kb) =>
-      `${file} (${kb} KB) will be written to the board’s configuration flash for good and replace what is there. The board will start with this design every time it powers up.`,
-    buttons: ['Write to flash', 'Cancel'],
+  flashWrite: {
+    en: {
+      title: 'Write to FPGA flash',
+      message: 'Write the bitstream to the board’s flash memory?',
+      detail: (file, kb) =>
+        `${file} (${kb} KB) will be written to the board’s configuration flash for good and replace what is there. The board will start with this design every time it powers up.`,
+      buttons: ['Write to flash', 'Cancel'],
+    },
+    tr: {
+      title: 'FPGA flash belleğine yaz',
+      message: 'Bitstream karttaki flash belleğe yazılsın mı?',
+      detail: (file, kb) =>
+        `${file} (${kb} KB) kartın yapılandırma flash belleğine kalıcı olarak yazılacak ve oradaki içeriğin yerini alacak. Kart her açılışta bu tasarımla başlayacak.`,
+      buttons: ['Flash’a yaz', 'İptal'],
+    },
   },
-  tr: {
-    title: 'FPGA flash belleğine yaz',
-    message: 'Bitstream karttaki flash belleğe yazılsın mı?',
-    detail: (file, kb) =>
-      `${file} (${kb} KB) kartın yapılandırma flash belleğine kalıcı olarak yazılacak ve oradaki içeriğin yerini alacak. Kart her açılışta bu tasarımla başlayacak.`,
-    buttons: ['Flash’a yaz', 'İptal'],
+  // quartus_pgm writing a .pof into a CPLD (MAX 7000, MAX II / V): the chip keeps it, there is no SRAM load
+  cpldWrite: {
+    en: {
+      title: 'Program the CPLD',
+      message: 'Write the design into the board’s CPLD?',
+      detail: (file, kb) =>
+        `${file} (${kb} KB) will be written into the CPLD’s own memory for good and replace the design that is there. The CPLD keeps it after power-off.`,
+      buttons: ['Program', 'Cancel'],
+    },
+    tr: {
+      title: 'CPLD’yi programla',
+      message: 'Tasarım karttaki CPLD’ye yazılsın mı?',
+      detail: (file, kb) =>
+        `${file} (${kb} KB) CPLD’nin kendi belleğine kalıcı olarak yazılacak ve oradaki tasarımın yerini alacak. CPLD bu tasarımı güç kesilince de korur.`,
+      buttons: ['Programla', 'İptal'],
+    },
   },
 };
 
@@ -182,8 +201,8 @@ async function pageLanguage() {
  * page cannot draw, hide or click it. "Cancel" is the default button.
  */
 async function confirmToolRun({ kind, file, bytes, signal }) {
-  if (kind !== 'flashWrite' || !mainWindow || mainWindow.isDestroyed() || signal?.aborted) return false;
-  const text = CONFIRM_TEXT[await pageLanguage()];
+  if (!Object.prototype.hasOwnProperty.call(CONFIRM_TEXT, kind) || !mainWindow || mainWindow.isDestroyed() || signal?.aborted) return false;
+  const text = CONFIRM_TEXT[kind][await pageLanguage()];
   if (signal?.aborted) return false;
   const { response } = await dialog.showMessageBox(mainWindow, {
     type: 'warning',

@@ -133,6 +133,20 @@ function quartusCompile(req) {
   };
 }
 
+/**
+ * Quartus programmer: quartus_pgm loads the file over JTAG through the first cable the JTAG server knows (-c 1, the
+ * USB-Blaster of a single plugged-in board): a .sof into an FPGA's SRAM, a .pof into a CPLD's own memory. The
+ * page never names a cable. The operation "p;<file>" is one argument handed to quartus_pgm.exe directly (no
+ * shell or cmd.exe reads it), and the file name holds no ";" or spaces (FILE_RE). The JTAG server it talks to is
+ * the Windows service Quartus installs (jtagserver), which keeps running as before.
+ */
+function quartusProgram(req) {
+  word(req.part, QUARTUS_PART_RE);
+  const file = word(req.bitstream, FILE_RE);
+  if (!/\.(sof|pof)$/i.test(file)) throw new Error(`Template value refused: ${file}`);
+  return { program: 'quartus_pgm', files: {}, args: ['-c', '1', '-m', 'JTAG', '-o', `p;${file}`] };
+}
+
 /** One step of the ISE FPGA chain, as ISE's own process "Generate Programming File" runs them */
 function iseStep(req) {
   const top = word(req.top, IDENT_RE);
@@ -161,13 +175,14 @@ function iseStep(req) {
   }
 }
 
-/** { program?, files, args } of a checked request; program is the ISE executable of the step */
+/** { program?, files, args } of a checked request; program is the executable next to the install's (ISE steps, quartus_pgm) */
 function scriptFor(tool, req) {
   if (tool === 'vivado' && req.step === 'build') return vivadoBuild(req);
   if (tool === 'vivado' && req.step === 'program') return vivadoProgram(req);
   if (tool === 'quartus' && req.step === 'compile') return quartusCompile(req);
+  if (tool === 'quartus' && req.step === 'program') return quartusProgram(req);
   if (tool === 'ise') return iseStep(req);
   throw new Error(`No template for ${tool} ${req.step}`);
 }
 
-module.exports = { scriptFor, vivadoBuild, vivadoProgram, vivadoDie, quartusCompile, iseStep };
+module.exports = { scriptFor, vivadoBuild, vivadoProgram, vivadoDie, quartusCompile, quartusProgram, iseStep };

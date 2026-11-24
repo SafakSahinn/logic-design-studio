@@ -6,6 +6,7 @@
 //   vivado  --step build    --part xc7a35tcpg236-1 --top top --source top.v ... --constraints top.xdc
 //   vivado  --step program  --part xc7a35tcpg236-1 --bitstream design.bit   (the only file sent: a .bit)
 //   quartus --step compile  --part EP4CE22F17C6    --top top --source top.v ... --constraints top.qsf
+//   quartus --step program  --part EP4CE22F17C6    --bitstream design.sof  (or a CPLD's design.pof; the only file)
 //   ise     --step xst      --part xc6slx9-2-tqg144 --top top --source top.v ...
 //   ise     --step ngdbuild --part ... --top top --constraints top.ucf      (reads top.ngc)
 //   ise     --step map      --part ... --top top                            (reads top.ngd)
@@ -40,14 +41,18 @@ const ISE_PART_RE = /^xc(?:3s[0-9]{2,4}(?:e|a|an|adsp)?|6slx[0-9]{1,3}t?|2c[0-9]
 const HDL_EXT = /\.(v|sv|vhd|vhdl)$/i;
 /**
  * Per tool and step what the option line must hold. bitstream: the step loads that file onto a board and gets no
- * other file (vivado program: SRAM over JTAG through Vivado's own hw_server, see vendorScripts.vivadoProgram).
+ * other file (vivado program: SRAM over JTAG through Vivado's own hw_server, see vendorScripts.vivadoProgram;
+ * quartus program: quartus_pgm on the first JTAG cable, see vendorScripts.quartusProgram).
  */
 const STEPS = {
   vivado: {
     build: { part: true, top: true, sources: true, constraints: /\.xdc$/i },
     program: { part: true, bitstream: /\.bit$/i },
   },
-  quartus: { compile: { part: true, top: true, sources: true, constraints: /\.qsf$/i } },
+  quartus: {
+    compile: { part: true, top: true, sources: true, constraints: /\.qsf$/i },
+    program: { part: true, bitstream: /\.(sof|pof)$/i },
+  },
   ise: {
     xst: { part: true, top: true, sources: true },
     ngdbuild: { part: true, top: true, constraints: /\.ucf$/i, reads: (top) => [`${top}.ngc`] },
@@ -107,7 +112,7 @@ function parseVendorArgs(tool, args) {
     if (!out.bitstream || !FILE_RE.test(out.bitstream) || !spec.bitstream.test(out.bitstream)) return deny(`${tool} --bitstream: expects a bitstream file name`);
   } else if (out.bitstream !== null) return deny(`${tool} ${out.step}: --bitstream is not used`);
   // Quartus reads the settings of revision <top> from <top>.qsf
-  if (tool === 'quartus' && out.constraints !== `${out.top}.qsf`) return deny('quartus --constraints: must be <top>.qsf');
+  if (tool === 'quartus' && spec.constraints && out.constraints !== `${out.top}.qsf`) return deny('quartus --constraints: must be <top>.qsf');
   out.reads = spec.reads ? spec.reads(out.top) : [];
   return { ok: true, request: out };
 }
@@ -211,6 +216,21 @@ function isXilinxBitFile(data) {
 }
 
 /**
+ * Quartus programming files start with their type: "SOF\0" (SRAM object file) or "POF\0" (programmer object file),
+ * as Quartus Prime and Quartus II both write them; the file name's extension must say the same.
+ */
+function isQuartusProgrammingFile(name, data) {
+  if (!(data instanceof Uint8Array) || data.length < 64 || data.length > MAX_BIT_BYTES) return false;
+  const ext = /\.(sof|pof)$/i.exec(name);
+  if (!ext) return false;
+  const magic = ext[1].toUpperCase();
+  return data[0] === magic.charCodeAt(0) && data[1] === magic.charCodeAt(1) && data[2] === magic.charCodeAt(2) && data[3] === 0;
+}
+
+/** Whether a programming run's file is what its tool loads onto a board */
+const isProgrammingFile = (tool, name, data) => (tool === 'vivado' ? isXilinxBitFile(data) : tool === 'quartus' ? isQuartusProgrammingFile(name, data) : false);
+
+/**
  * { ok: true, request } or a denial for a vendor tool request. files is the page's file map; it may hold only the
  * tool's file types, all as plain names in the run folder, and must hold every file the step reads.
  */
@@ -220,9 +240,9 @@ function checkVendorRequest(tool, args, files) {
   const request = parsed.request;
   const names = Object.keys(files || {});
   if (request.bitstream) {
-    // A programming run gets the bitstream and nothing else, and it must be a Xilinx bitstream file
+    // A programming run gets the bitstream and nothing else, and it must be the tool's own file type
     if (names.length !== 1 || names[0] !== request.bitstream) return deny(`${tool} ${request.step}: only the file ${request.bitstream} is sent`);
-    if (!isXilinxBitFile(files[request.bitstream])) return deny(`${tool}: ${request.bitstream} is not a Xilinx bitstream`);
+    if (!isProgrammingFile(tool, request.bitstream, files[request.bitstream])) return deny(`${tool}: ${request.bitstream} is not a ${tool === 'vivado' ? 'Xilinx bitstream' : 'Quartus programming file'}`);
     return { ok: true, request };
   }
   for (const name of names) {
@@ -253,4 +273,5 @@ module.exports = {
   parseVendorArgs,
   checkConstraintFile,
   checkVendorRequest,
+  isQuartusProgrammingFile,
 };
