@@ -246,6 +246,8 @@ ipcMain.handle('lds-tool:vendor-choose', async (e) => {
   tools.resetProbes();
   return { kind: hit.kind, exe: hit.exe, version: hit.version };
 });
+// Whether Vivado's hw_server is running (it holds the JTAG cable openFPGALoader needs). Only a look: no process is stopped.
+ipcMain.handle('lds-tool:vendor-hw-server', (e) => (fromAppFrame(e) ? tools.hwServerRunning() : null));
 ipcMain.handle('lds-tool:vendor-clear', (e, kind) => {
   if (!fromAppFrame(e) || !VENDOR_KINDS.includes(kind)) return false;
   const current = readSettings().vendorPaths;

@@ -57,5 +57,6 @@ contextBridge.exposeInMainWorld('ldsTool', {
   vendorCheck: (kind) => ipcRenderer.invoke('lds-tool:vendor-check', String(kind)),
   vendorChoose: () => ipcRenderer.invoke('lds-tool:vendor-choose'),
   vendorClear: (kind) => ipcRenderer.invoke('lds-tool:vendor-clear', String(kind)),
+  vendorHwServer: () => ipcRenderer.invoke('lds-tool:vendor-hw-server'),
   onProgress: listen('lds-tool:progress', (cb, p) => cb(p.runId, p.progress)),
 });

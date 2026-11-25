@@ -630,7 +630,60 @@ function createToolRunner({ readSettings, onProgress, confirmRun, limits }) {
     for (const id of [...running.keys(), ...confirming.keys()]) cancel(id);
   }
 
-  return { probe, run, cancel, cancelAll, resetProbes, vendorStatus, vendorCheck, locateVendorFolder };
+  // One hw_server check at a time: concurrent callers share it
+  let hwServerCheck = null;
+  const hwServer = () => {
+    if (!hwServerCheck) hwServerCheck = hwServerRunning().finally(() => (hwServerCheck = null));
+    return hwServerCheck;
+  };
+
+  return { probe, run, cancel, cancelAll, resetProbes, vendorStatus, vendorCheck, locateVendorFolder, hwServerRunning: hwServer };
 }
 
-module.exports = { createToolRunner, TOOLS, isSafeRelativePath };
+/**
+ * Whether Vivado's hardware server (hw_server.exe or cs_server.exe) is running: Vivado leaves both behind when it
+ * exits, and hw_server keeps the JTAG cable open, so openFPGALoader finds no cable. true / false, or null when it
+ * cannot be told (not Windows, tasklist failed). Only looks: it never stops a process.
+ */
+function hwServerRunning({ timeoutMs = 5000 } = {}) {
+  if (!IS_WIN) return Promise.resolve(null);
+  // tasklist from System32 by its full path, not from the PATH
+  const tasklist = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tasklist.exe');
+  return new Promise((resolve) => {
+    let out = '';
+    let done = false;
+    const end = (value) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    let child;
+    try {
+      // CSV without a header: one '"name.exe","pid",...' line per process; the "no tasks" text is localized, so only
+      // the image names are looked at
+      child = spawn(tasklist, ['/FO', 'CSV', '/NH'], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch {
+      resolve(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {
+        // already gone
+      }
+      end(null);
+    }, timeoutMs);
+    child.stdout.on('data', (d) => {
+      if (out.length < 4 * 1024 * 1024) out += d.toString('latin1');
+    });
+    child.on('error', () => end(null));
+    child.on('close', (code) => {
+      if (code !== 0) return end(null);
+      end(/^"(?:hw_server|cs_server)\.exe",/im.test(out));
+    });
+  });
+}
+
+module.exports = { createToolRunner, hwServerRunning, TOOLS, isSafeRelativePath };
