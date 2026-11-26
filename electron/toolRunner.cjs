@@ -98,6 +98,9 @@ function killTree(child) {
   }
 }
 
+/** The one busy key of every programming run: two programmers on one JTAG cable would collide */
+const JTAG_BUSY_KEY = 'jtag';
+
 /**
  * confirmRun(request): asked before a run that changes something outside the computer for good (a flash write,
  * see confirmationFor in toolPolicy.cjs). It must ask the user in the main process (a native dialog the page cannot
@@ -108,7 +111,7 @@ function createToolRunner({ readSettings, onProgress, confirmRun, limits }) {
   const LIMITS = { ...BASE_LIMITS, ...(limits && typeof limits === 'object' ? limits : {}) };
   const probeCache = new Map(); // tool id -> { available, version?, exe? }
   const running = new Map(); // run id -> { child, cancelled }
-  const busyTools = new Set(); // exclusive tools with a run in progress (including its confirmation)
+  const busyTools = new Map(); // busy key -> the tool holding it, with a run in progress (including its confirmation)
   const confirming = new Map(); // run id -> { cancelled } while the user is asked
 
   /** settings.toolSearchDirs, then PATH: absolute folders only */
@@ -215,8 +218,8 @@ function createToolRunner({ readSettings, onProgress, confirmRun, limits }) {
       appendFiles: script.append,
       firstOutputMs: LIMITS.vendorFirstOutputMs,
       install: { kind: install.kind, version: install.version },
-      // A board-programming step holds the JTAG cable: one at a time, like openFPGALoader
-      exclusiveKey: parsed.request.bitstream ? `${tool}:${parsed.request.step}` : null,
+      // A board-programming step holds the JTAG cable: one at a time, together with openFPGALoader
+      exclusiveKey: parsed.request.bitstream ? JTAG_BUSY_KEY : null,
     };
   }
 
@@ -495,11 +498,11 @@ function createToolRunner({ readSettings, onProgress, confirmRun, limits }) {
     if (reserve.cancelled) return toolError('cancelled', 'Cancelled');
     if (launch.error) return launch;
 
-    // Exclusive tools (openFPGALoader) run one at a time; a vendor tool only for its programming step
-    const busyKey = TOOLS[tool].exclusive === true ? tool : launch.exclusiveKey || null;
+    // Programmers share the JTAG cable: openFPGALoader and the vendor tools' programming steps run one at a time
+    const busyKey = TOOLS[tool].exclusive === true ? JTAG_BUSY_KEY : launch.exclusiveKey || null;
     const exclusive = busyKey !== null;
-    if (exclusive && busyTools.has(busyKey)) return toolError('busy', `${busyKey} is already running`);
-    if (exclusive) busyTools.add(busyKey);
+    if (exclusive && busyTools.has(busyKey)) return toolError('busy', `${busyTools.get(busyKey)} is already running`);
+    if (exclusive) busyTools.set(busyKey, tool);
     try {
       const confirmation = confirmationFor(tool, args);
       if (confirmation) {

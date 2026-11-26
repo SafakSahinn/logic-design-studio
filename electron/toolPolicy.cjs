@@ -10,8 +10,10 @@
 //   - every value that names a file must be a safe relative path, so tools read and write only the run folder;
 //   - yosys scripts are lexed strictly: quotes, backslashes, here-documents and "#" inside a token are refused,
 //     so this lexer can never see different command boundaries than yosys itself;
-//   - HDL sources may reference other files (`include, $readmem, VHDL file) only through a plain relative string
-//     literal, never through a macro, a constant or file_open.
+//   - HDL sources may reference other files (`include, $readmem, $fopen, init_file parameters, VHDL file) only
+//     through a plain relative string literal, never through a macro, a constant or file_open (hdlFileRefs.cjs
+//     tokenizes the source first, so comments and macros cannot hide a reference);
+//   - macro definitions on a yosys command line are plain words, so a macro cannot stand for a file task.
 //
 // The run folder is a fresh temporary directory, so relative paths cannot reach anything else.
 'use strict';
@@ -19,6 +21,7 @@
 const { isSafeRelativePath } = require('./pathRules.cjs');
 const { PART_RE } = require('./openxc7.cjs');
 const { checkVendorRequest, parseVendorArgs } = require('./vendorPolicy.cjs');
+const { checkVerilog, checkVhdl, isPlainDefine } = require('./hdlFileRefs.cjs');
 
 const deny = (message) => ({ ok: false, message });
 const OK = { ok: true };
@@ -88,7 +91,7 @@ const YOSYS_VALUE_OPTIONS = {
   '-p': 'script', '--commands': 'script',
   '-s': 'scriptfile', '--scriptfile': 'scriptfile',
   '-f': 'frontend', '--frontend': 'frontend',
-  '-r': 'plain', '--top': 'plain', '-D': 'plain', '--define': 'plain', '-b': 'backend', '--backend': 'backend',
+  '-r': 'plain', '--top': 'plain', '-D': 'define', '--define': 'define', '-b': 'backend', '--backend': 'backend',
   '-v': 'plain', '--verbose': 'plain', '-W': 'plain', '--warning-as-warning': 'plain', '-w': 'plain',
   '--warning-as-message': 'plain', '-e': 'plain', '--warning-as-error': 'plain', '-x': 'plain', '--experimental': 'plain',
 };
@@ -146,6 +149,9 @@ function leavesRunFolder(token) {
   return false;
 }
 
+// Commands that take read_verilog's -D NAME=VALUE: a macro there could expand to $readmemh or a path
+const YOSYS_DEFINE_COMMANDS = new Set(['read_verilog', 'read', 'verilog_defines', 'verilog_defaults']);
+
 function checkYosysScript(script, where) {
   if (typeof script !== 'string') return deny(`${where}: not text`);
   let commands;
@@ -157,6 +163,12 @@ function checkYosysScript(script, where) {
   for (const tokens of commands) {
     const name = tokens[0];
     if (!YOSYS_COMMANDS.has(name)) return deny(`${where}: the yosys command "${name}" is not allowed`);
+    if (YOSYS_DEFINE_COMMANDS.has(name)) {
+      for (let i = 1; i < tokens.length; i++) {
+        const value = tokens[i] === '-D' ? tokens[++i] : tokens[i].startsWith('-D') ? tokens[i].slice(2) : null;
+        if (value !== null && !isPlainDefine(value)) return deny(`${where}: "${name} -D ${value ?? ''}": a macro may only be NAME or NAME=word`);
+      }
+    }
     for (const token of tokens) {
       if (YOSYS_DENIED_TOKENS.has(token)) return deny(`${where}: "${name} ${token}" is not allowed`);
       if (leavesRunFolder(token)) return deny(`${where}: "${token}" names a file outside the run folder`);
@@ -180,6 +192,7 @@ function checkYosys(args, files) {
         r = checkYosysScript(fileText(files, value), value);
       } else if (kind === 'frontend') r = YOSYS_FRONTENDS.has(value) ? OK : deny(`${arg} ${value} is not allowed`);
       else if (kind === 'backend') r = YOSYS_BACKENDS.has(value) ? OK : deny(`${arg} ${value} is not allowed`);
+      else if (kind === 'define') r = isPlainDefine(value) ? OK : deny(`${arg} ${value}: a macro may only be NAME or NAME=word`);
       else r = checkPlainOrRelative(value, arg);
       if (!r.ok) return r;
       continue;
@@ -485,19 +498,14 @@ function fileText(files, name) {
   return '';
 }
 
-/** A single plain string literal that names a file inside the run folder */
-function isRelativeLiteral(expr) {
-  const m = /^\s*"([^"]*)"\s*$/.exec(expr);
-  return !!m && isSafeRelativePath(m[1]);
-}
-
 const VERILOG_EXT = /\.(v|sv|vh|svh)$/i;
 const VHDL_EXT = /\.(vhd|vhdl)$/i;
 
 /**
  * HDL sources may read other files only through a plain relative string literal: `include "x.vh",
- * $readmemh("rom.hex", ...), VHDL `file f : text open read_mode is "rom.txt";`. A macro, a constant, a
- * concatenation or VHDL file_open could name any file on the computer, so they are refused.
+ * $readmemh("rom.hex", ...), (* ram_init_file = "rom.mif" *), VHDL `file f : text open read_mode is "rom.txt";`.
+ * A macro, a constant, a concatenation or VHDL file_open could name any file on the computer, so they are refused
+ * (hdlFileRefs.cjs).
  */
 function checkInputFiles(files) {
   for (const [name, data] of Object.entries(files || {})) {
@@ -505,25 +513,8 @@ function checkInputFiles(files) {
     const vhdl = VHDL_EXT.test(name);
     if (!verilog && !vhdl) continue;
     const text = typeof data === 'string' ? data : Buffer.from(data).toString('utf8');
-    if (verilog) {
-      for (const m of text.matchAll(/`include\b\s*([^\r\n]*)/g)) {
-        const arg = /^("[^"]*")/.exec(m[1].trim());
-        if (!arg || !isRelativeLiteral(arg[1])) return deny(`${name}: \`include must name a relative file as a plain string`);
-      }
-      for (const m of text.matchAll(/\$readmem[hb]\s*\(\s*([^,)]*)/gi)) {
-        if (!isRelativeLiteral(m[1])) return deny(`${name}: $readmem must name a relative file as a plain string`);
-      }
-      // Vivado and Quartus synthesis also open files in initial blocks ($fopen, then $fscanf / $fwrite)
-      for (const m of text.matchAll(/\$fopen\s*\(\s*([^,)]*)/gi)) {
-        if (!isRelativeLiteral(m[1])) return deny(`${name}: $fopen must name a relative file as a plain string`);
-      }
-    }
-    if (vhdl) {
-      if (/\bfile_open\s*\(/i.test(text)) return deny(`${name}: file_open is not allowed; declare the file with a relative string instead`);
-      for (const m of text.matchAll(/\bfile\s+[A-Za-z][\w]*(?:\s*,\s*[A-Za-z][\w]*)*\s*:[^;]*?\bis\s+(?:in\s+|out\s+)?([^;]*);/gi)) {
-        if (!isRelativeLiteral(m[1])) return deny(`${name}: a VHDL file must be declared with a relative file name as a plain string`);
-      }
-    }
+    const r = verilog ? checkVerilog(name, text) : checkVhdl(name, text);
+    if (!r.ok) return r;
   }
   return OK;
 }

@@ -157,7 +157,12 @@ function findInstalls({ settings = {}, env = process.env, isWin = process.platfo
     if (hit) auto.push(hit);
   }
   auto.sort((a, b) => compareVersions(parseVersion(b.version), parseVersion(a.version)));
-  for (const hit of auto) push(hit, 'auto');
+  for (const hit of auto) {
+    // A Quartus folder that does not show its version (D:\altera\quartus) may be Quartus II 13.0 or Prime: it is
+    // listed for both, so a Cyclone II / MAX 7000 build finds it too (the folder dialog asks the program instead)
+    if (hit.kind === 'quartus' && !hit.version && !seen.has(hit.exe.toLowerCase())) result.quartusLegacy.push({ exe: hit.exe, version: null, source: 'auto' });
+    push(hit, 'auto');
+  }
   return result;
 }
 

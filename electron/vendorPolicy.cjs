@@ -39,7 +39,7 @@ const VIVADO_PART_RE = /^xc7[aksz]\d{1,3}t?s?[a-z]{2,5}\d{3,4}-[1-3]L?$/;
  */
 const QUARTUS_PART_RE = /^(?:EP[0-9A-Z]{4,20}|EPM[0-9A-Z]{4,20}(?:-[0-9]{1,2})?|5[A-Z][0-9A-Z]{4,20}|10[A-Z][0-9A-Z]{4,20})$/;
 /** ISE device-speed-package: xc6slx9-2-tqg144, xc3s100e-4-cp132, xc3s5000-5-fg676, xc2c64a-5-vq44 */
-const ISE_PART_RE = /^xc(?:3s[0-9]{2,4}(?:e|a|an|adsp)?|6slx[0-9]{1,3}t?|2c[0-9]{2,3}a?|95[0-9]{2,3}(?:xl|xv)?)-[1-5]l?-[a-z]{2,4}[0-9]{2,4}$/i;
+const ISE_PART_RE = /^xc(?:3s[0-9]{2,4}(?:e|a|an|adsp)?|6slx[0-9]{1,3}t?|2c[0-9]{2,3}a?|95[0-9]{2,3}(?:xl|xv)?)-(?:[1-9]|1[0-9]|20)l?-[a-z]{2,4}[0-9]{2,4}$/i;
 /** The ISE CPLDs (CoolRunner-II, XC9500): fitted with cpldfit, programmed from a .jed; the rest are FPGAs (.bit) */
 const ISE_CPLD_RE = /^xc(?:2c|95)/i;
 /** A device's position in the JTAG chain (iMPACT counts from 1; the board files' JTAGPos) */
