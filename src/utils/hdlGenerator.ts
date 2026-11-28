@@ -2543,6 +2543,13 @@ function buildModule(
             warn: (text) => {
               warnings.push(`${c.label || partName(c.type as PartId)}: ${text}`);
             },
+            topPort: (hint, dir, width) => {
+              if (spec.subPorts) return null;
+              const pn = names.make(hint, 'port');
+              // No canvas pin is behind the port's bits (they are the board's pins), so test vectors leave it out
+              addPort({ name: pn, dir, width, source: { compId: c.id, type: c.type, pins: [] } });
+              return pn;
+            },
           });
           break;
         }

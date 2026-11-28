@@ -177,10 +177,23 @@ export function ioPinLabel(io: BoardIo, index: number): { key: string; values: R
     return { key: `map.pin.rgb.${['red', 'green', 'blue'][index - io.inputPins.length] ?? 'red'}`, values: {} };
   }
   if (io.kind === 'dipSwitch' && boardIoPin(io, index)?.dir === 'in') return { key: 'map.pin.switch', values: { n: index + 1 } };
+  if (io.kind === 'localBus' && index >= 0 && index < count) return { key: 'map.pin.named', values: { name: localBusPinName(io, index) } };
   return count > 1 ? { key: 'map.pin.numbered', values: { n: index } } : { key: 'map.pin.single', values: {} };
 }
 
 const SEGMENTS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'dp'];
+
+/**
+ * Name of a local-bus pin (evo IoComponentTypes LocalBus: ReptarLocalBus.getInputLabel / getOutputLabel /
+ * getIoLabel): the bus strobes and the upper address bits A15..A23 in, WAIT and IRQ out, the address / data lines.
+ */
+function localBusPinName(io: BoardIo, index: number): string {
+  const rin = io.inputPins.length;
+  const rout = io.outputPins.length;
+  if (index < rin) return ['SP6_LB_nCS3_i', 'SP6_LB_nADV_ALE_i', 'SP6_LB_RE_nOE_i', 'SP6_LB_nWE_i'][index] ?? `Addr_LB_i_${index + 11}`;
+  if (index < rin + rout) return ['SP6_LB_WAIT3_o', 'IRQ_o'][index - rin] ?? `out_${index - rin}`;
+  return `Addr_Data_LB_io_${index - rin - rout}`;
+}
 
 // --- mapping operations ------------------------------------------------------------------------------------
 

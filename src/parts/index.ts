@@ -16,6 +16,7 @@ import './socPio';
 import './socJtagUart';
 import './socVga';
 import './socDma';
+import './reptarLocalBus';
 
 export {
   allParts,
@@ -24,6 +25,7 @@ export {
   getPart,
   mergePartCatalog,
   onSimulationRequest,
+  partFixedLabel,
   partName,
   partNamespace,
   partSize,

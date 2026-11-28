@@ -1,0 +1,12 @@
+{
+  "meta": {
+    "badge": "LB",
+    "name": "Reptar Local Bus",
+    "description": "The FPGA end of the REPTAR board's local bus (Logisim-evolution ReptarLB): chip select, address latch, read / write strobes and the upper address bits come from the board's CPU, WAIT and IRQ go back, and the 16 address / data lines are three-state. Not simulated (the outputs stay undriven); for the FPGA flow on the REPTAR Spartan-6 board, VHDL / Verilog with Xilinx IOBUFs"
+  },
+  "hdl": {
+    "unisim": "the LocalBus module uses the Xilinx IOBUF primitive (UNISIM library), as in Logisim-evolution: it builds only for Xilinx parts (the REPTAR board's Spartan-6, ISE). Its bus pins are top-level ports; map them on the board's local bus.",
+    "insideIc": "the Reptar Local Bus works only on the top-level circuit (its bus pins are FPGA pins); inside an IC its outputs are tied to 0.",
+    "insideIcComment": "Reptar Local Bus inside an IC: no FPGA pins here, outputs tied to 0"
+  }
+}

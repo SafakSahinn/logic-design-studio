@@ -153,7 +153,7 @@ import {
   imageShownSize,
   subcircuitLayoutOf,
 } from '../utils/circuitEngine';
-import { PART_TOOLBOX_GROUPS, copyParts, getPart, onSimulationRequest, partName, partSize, partToolboxName, partsInGroup, toolboxGroupTitle, type ToolboxGroup } from '../parts';
+import { PART_TOOLBOX_GROUPS, copyParts, getPart, onSimulationRequest, partFixedLabel, partName, partSize, partToolboxName, partsInGroup, toolboxGroupTitle, type ToolboxGroup } from '../parts';
 import { AppearanceShapesSvg } from './AppearanceShapes';
 import { resolveDynamicLive, resolveDynamicTemplate } from '../utils/dynamicElements';
 import AppearanceEditor from './AppearanceEditor';
@@ -1638,7 +1638,7 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
   // Attribute panel label field (single part)
   const handleSetLabel = (compId: string, label: string) => {
     const comp = components.find((c) => c.id === compId);
-    if (!comp || (comp.label || '') === label) return;
+    if (!comp || (comp.label || '') === label || partFixedLabel(comp.type) !== undefined) return;
     recordHistory();
     setComponents((prev) => prev.map((c) => (c.id === compId ? { ...c, label } : c)));
   };
@@ -12194,7 +12194,8 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
                           }}
                           onBlur={(e) => handleSetLabel(first.id, e.target.value.trim())}
                           className={`${fieldCls} font-sans`}
-                          title="Parçanın adı (HDL ve tablolarda da kullanılır)"
+                          readOnly={partFixedLabel(first.type) !== undefined}
+                          title={partFixedLabel(first.type) !== undefined ? 'Bu parçanın etiketi sabittir (HDL adı)' : 'Parçanın adı (HDL ve tablolarda da kullanılır)'}
                         />
                       </div>
                     )}

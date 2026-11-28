@@ -37,6 +37,7 @@
   },
   "map": {
     "pin": {
+      "named": "{{name}}",
       "single": "Pin",
       "numbered": "Pin {{n}}",
       "switch": "Switch {{n}}",
@@ -56,6 +57,7 @@
     "rgbOnLeds": "RGB LED \"{{name}}\": the board has no free RGB LED, so red, green and blue went to single LEDs.",
     "hexDigitOnLeds": "Hex digit \"{{name}}\": its 4-bit value and dot went to LEDs; to see the digit on a 7-segment display, decode it in the circuit (a hex to 7-segment decoder) and map the segments.",
     "powerOnResetOnButton": "Power-on reset \"{{name}}\" went to a button: for a real power-on pulse use the board's reset circuit, or a counter on the board clock.",
+    "localBusNoResource": "Reptar Local Bus \"{{name}}\": this board has no local bus (only the REPTAR Spartan-6 board has one), so it was left unmapped; map its pins by hand only if your board wires such a bus.",
     "portIoConnector": "Port I/O \"{{name}}\" has bidirectional (three-state) pins: they went to connector pins (Pmod / GPIO); check that the connector is the one you wire.",
     "partActiveLow": "\"{{name}}\" is set to light on 0: its port carries the circuit's value and the board's own active level is handled for you, so on the board it lights the other way round. Set the part to light on 1 for the same picture.",
     "noResource": {

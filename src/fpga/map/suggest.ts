@@ -199,6 +199,15 @@ export function suggestMapping(
       continue;
     }
     let targets: (PinTarget | null)[] | null = null;
+    if (part.type === 'reptarLocalBus') {
+      // Only the board's local bus fits it (13 inputs, 2 outputs, 16 bidirectional pins in the same order); its
+      // pins are not handed out one by one on other resources
+      targets = placeBlock(a, part, ['localBus']);
+      if (targets) take(a, targets);
+      else notes.push({ code: 'localBusNoResource', compId: part.compId, values: { name } });
+      mapping.parts[part.compId] = targets ?? part.pins.map(() => null);
+      continue;
+    }
     if (part.type === 'sevenSegment') targets = placeSevenSegment(a, part);
     else if (part.type === 'rgbLed') targets = placeRgbLed(a, part);
     else if (part.pins.every((p) => p.dir === part.pins[0].dir)) targets = placeBlock(a, part, kindsFor(part.type, part.pins[0].dir));
@@ -220,7 +229,7 @@ export function suggestMapping(
   // A part the user mapped only partly: its own targets stay, its open pins get free pins one by one (after the
   // other parts, which still get whole resources first)
   for (const part of parts) {
-    if (!keptIds.has(part.compId) || NO_RESOURCE_TYPES.has(part.type)) continue;
+    if (!keptIds.has(part.compId) || NO_RESOURCE_TYPES.has(part.type) || part.type === 'reptarLocalBus') continue;
     const current = mapping.parts[part.compId];
     if (current.every((t) => t)) continue;
     const openIdx = current.flatMap((t, i) => (t ? [] : [i]));

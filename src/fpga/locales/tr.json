@@ -37,6 +37,7 @@
   },
   "map": {
     "pin": {
+      "named": "{{name}}",
       "single": "Pin",
       "numbered": "Pin {{n}}",
       "switch": "Anahtar {{n}}",
@@ -56,6 +57,7 @@
     "rgbOnLeds": "RGB LED \"{{name}}\": kartta boş RGB LED yok, kırmızı, yeşil ve mavi tek renkli LED'lere atandı.",
     "hexDigitOnLeds": "Onaltılık hane \"{{name}}\": 4 bitlik değeri ve noktası LED'lere atandı; haneyi 7-segment ekranda görmek için devrede çözün (onaltılıktan 7-segmente kod çözücü) ve segmentleri eşleyin.",
     "powerOnResetOnButton": "Açılış sıfırlaması \"{{name}}\" bir butona atandı: gerçek bir açılış darbesi için kartın sıfırlama devresini ya da kart saatiyle sayan bir sayacı kullanın.",
+    "localBusNoResource": "Reptar Local Bus \"{{name}}\": bu kartta yerel veri yolu yok (yalnız REPTAR Spartan-6 kartında var), eşlenmeden bırakıldı; pinlerini elle ancak kartınız böyle bir veri yolu bağlıyorsa eşleyin.",
     "portIoConnector": "Port I/O \"{{name}}\" iki yönlü (üç durumlu) pinlere sahip: konnektör pinlerine (Pmod / GPIO) atandı; bağlayacağınız konnektörün bu olduğunu kontrol edin.",
     "partActiveLow": "\"{{name}}\" \"0'da yanar\" ayarlı: portu devredeki değeri taşır, kartın kendi aktif seviyesi sizin için ayarlanır; bu yüzden kartta tersine yanar. Aynı görüntü için parçayı \"1'de yanar\" yapın.",
     "noResource": {

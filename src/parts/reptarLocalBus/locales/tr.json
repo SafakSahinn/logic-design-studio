@@ -1,0 +1,12 @@
+{
+  "meta": {
+    "badge": "LB",
+    "name": "Reptar Local Bus",
+    "description": "REPTAR kartının yerel veri yolunun FPGA ucu (Logisim-evolution ReptarLB): yonga seçme, adres mandalı, okuma / yazma darbeleri ve üst adres bitleri kartın işlemcisinden gelir, WAIT ve IRQ geri gider, 16 adres / veri hattı üç durumludur. Simüle edilmez (çıkışlar sürülmez); REPTAR Spartan-6 kartında FPGA akışı için, Xilinx IOBUF'lu VHDL / Verilog"
+  },
+  "hdl": {
+    "unisim": "LocalBus modülü, Logisim-evolution'daki gibi Xilinx IOBUF ilkelini (UNISIM kütüphanesi) kullanır: yalnız Xilinx yongalarında derlenir (REPTAR kartının Spartan-6'sı, ISE). Veri yolu pinleri üst seviye portlardır; kartın yerel veri yoluna eşleyin.",
+    "insideIc": "Reptar Local Bus yalnız üst seviye devrede çalışır (veri yolu pinleri FPGA pinleridir); bir IC'nin içinde çıkışları 0'a bağlandı.",
+    "insideIcComment": "IC içinde Reptar Local Bus: burada FPGA pini yok, çıkışlar 0'a bağlandı"
+  }
+}

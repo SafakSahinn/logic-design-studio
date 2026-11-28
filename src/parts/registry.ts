@@ -165,6 +165,12 @@ export interface HdlContext {
   instance(module: string, hint: string, ports: [port: string, expr: string][]): void;
   /** A note for the export report (already translated, e.g. with partText) */
   warn(text: string): void;
+  /**
+   * Declares a port of the top-level module that belongs to this part (FPGA pins, evo's "bubble" buses), named after
+   * `hint` (made unique), and returns its name; the FPGA dialog maps its bits on board pins. An IC's module has no
+   * such ports: there it returns null.
+   */
+  topPort(hint: string, dir: 'in' | 'out' | 'inout', width: number): string | null;
 }
 
 export interface PartDefinition {
@@ -179,6 +185,8 @@ export interface PartDefinition {
   /** Default pins; pin names are signal names and are not translated */
   inputs: PinDefinition[];
   outputs: PinDefinition[];
+  /** The part's label is always this text and cannot be edited (evo's read-only LABEL, e.g. a fixed HDL name) */
+  fixedLabel?: string;
   /**
    * Computes the outputs from the inputs. The component is a fresh shallow copy for this step: replace
    * comp.state.part with a new value instead of mutating the old one (the previous step may share it).
@@ -253,7 +261,15 @@ export function requestSimulation(): void {
 
 /** A new part of a registered type after its create() hook (the part itself for other types) */
 export function createPart(comp: CircuitComponentInstance): CircuitComponentInstance {
-  return parts.get(comp.type)?.create?.(comp) ?? comp;
+  const def = parts.get(comp.type);
+  if (!def) return comp;
+  const labelled = def.fixedLabel !== undefined && comp.label !== def.fixedLabel ? { ...comp, label: def.fixedLabel } : comp;
+  return def.create?.(labelled) ?? labelled;
+}
+
+/** The fixed label of a registered part type (PartDefinition.fixedLabel), undefined when its label is editable */
+export function partFixedLabel(type: string): string | undefined {
+  return parts.get(type)?.fixedLabel;
 }
 
 /** What a copied() hook knows about the copy action it is part of */
