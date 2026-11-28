@@ -117,8 +117,8 @@ import {
   keyboardText,
   keyboardType,
   keyboardView,
+  telnetOutgoing,
   telnetReceive,
-  telnetSent,
   ttyScreen,
   TTY_DEFAULT_BG,
   TTY_DEFAULT_COLOR,
@@ -2549,17 +2549,24 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
     pasteParts: () => handlePasteClipboard(),
   };
 
-  // ---- Telnet parts (Aşama 5c-2b). Desktop: each part asks the main process for the TCP server on its port
-  // (shared per port, see electron/telnetServer.cjs); client bytes go into every part on that port (evolution
-  // shares one buffer per port, here each part keeps its own) and bytes the circuit sends go to the newest
-  // client. Web: no sockets, the part's terminal window is its client. Only the parts of the open sheet's top
-  // level are served (parts inside an IC are not).
+  // ---- Telnet parts (Aşama 5c-2b, 7d-1). Desktop: each part asks the main process for the TCP server on its port
+  // (shared per port, see electron/telnetServer.cjs); client bytes go into every part on that port, whose copies
+  // of the shared buffer stay identical (the engine shares them like evolution's ServerHolder), and the bytes the
+  // circuit sends go to the newest client once per port (telnetOutgoing). Web: no sockets, a part's terminal
+  // window is a client of its port. Only the parts of the open sheet's top level are served (not inside an IC).
   const ldsNet = useMemo(() => getLdsNet(), []);
   const telnetRef = useRef({ components, poke: pokeComponent });
   telnetRef.current = { components, poke: pokeComponent };
-  // per part: the port|mode its server was opened with, and how many sent bytes were passed on already
+  // per part: the port|mode its server was opened with; telnetOutgoing's marks of the bytes passed on already
   const telnetOpenRef = useRef(new Map<string, string>());
   const telnetSentRef = useRef(new Map<string, number>());
+  // bytes from a client (network or terminal window) go into every part on the port
+  const telnetReceivePort = useCallback((port: number, bytes: number[]) => {
+    const { components: comps, poke } = telnetRef.current;
+    for (const c of comps) {
+      if (c.type === 'telnet' && getIo5cConfig(c).telnetPort === port) poke(c.id, (x) => telnetReceive(x, bytes));
+    }
+  }, []);
 
   useEffect(() => {
     if (!ldsNet) return;
@@ -2567,12 +2574,7 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
       .getLan()
       .then(setNetLan)
       .catch(() => {});
-    const offRx = ldsNet.onRx((port, bytes) => {
-      const { components: comps, poke } = telnetRef.current;
-      for (const c of comps) {
-        if (c.type === 'telnet' && getIo5cConfig(c).telnetPort === port) poke(c.id, (x) => telnetReceive(x, bytes));
-      }
-    });
+    const offRx = ldsNet.onRx(telnetReceivePort);
     const offStatus = ldsNet.onStatus((s) =>
       setNetStatus((prev) => {
         const next = { ...prev };
@@ -2588,14 +2590,14 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
       for (const id of opened.keys()) ldsNet.close(id);
       opened.clear();
     };
-  }, [ldsNet]);
+  }, [ldsNet, telnetReceivePort]);
 
   useEffect(() => {
     const opened = telnetOpenRef.current;
     const sent = telnetSentRef.current;
     const telnets = components.filter((c) => c.type === 'telnet');
     const live = new Set(telnets.map((c) => c.id));
-    for (const id of [...sent.keys()]) if (!live.has(id)) sent.delete(id);
+    for (const k of [...sent.keys()]) if (k.startsWith('p:') && !live.has(k.slice(2))) sent.delete(k);
     if (ldsNet) {
       for (const id of [...opened.keys()]) {
         if (!live.has(id)) {
@@ -2613,17 +2615,9 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
           opened.set(c.id, key);
         }
       }
-      // first sight (new part, loaded file) or a reset count: bytes sent before are history, not sent again
-      const count = c.state.telnetTxCount ?? 0;
-      const from = sent.get(c.id);
-      if (from === undefined || count < from) {
-        sent.set(c.id, count);
-      } else if (count > from) {
-        sent.set(c.id, count);
-        const { bytes } = telnetSent(c, from);
-        if (ldsNet && bytes.length) ldsNet.send(c.id, bytes);
-      }
     }
+    // bytes sent through a port's shared server, once (a new part or a loaded file passes on no history)
+    for (const o of telnetOutgoing(telnets, sent)) if (ldsNet) ldsNet.send(o.id, o.bytes);
     setTerminalWins((prev) => (prev.every((w) => live.has(w.id)) ? prev : prev.filter((w) => live.has(w.id))));
   }, [components, ldsNet]);
 
@@ -6346,6 +6340,13 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
         // Logisim-evolution Telnet.paintInstance (x2): box, "Telnet" and the port number, pin names inside
         const cfg = getIo5cConfig(comp);
         const waiting = comp.state.telnetRx?.length ?? 0;
+        // parts on the same port share one server (buffer, clock level, sent bytes)
+        const samePort = components.filter((c) => c.type === 'telnet' && c.id !== comp.id && getIo5cConfig(c).telnetPort === cfg.telnetPort);
+        const shareNote =
+          samePort.length === 0
+            ? ''
+            : `; bu porttaki ${samePort.length} parçayla tampon ortak` +
+              (samePort.some((c) => getIo5cConfig(c).telnetBufLen !== cfg.telnetBufLen) ? ' (tampon boyları farklı: her parça çalıştıkça ortak tampon boşalır)' : '');
         const pinText = (x: number, y: number, t: string, anchor: 'start' | 'end') => (
           <text x={x} y={y + 5} textAnchor={anchor} fill={io5Stroke} style={{ fontSize: 13, fontFamily: 'sans-serif' }} className="select-none">
             {t}
@@ -6366,7 +6367,7 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
             {pinText(74, 60, 'out', 'end')}
             {pinText(74, 80, 'av', 'end')}
             {pinText(74, 100, 'rd', 'end')}
-            <title>{`TCP port ${cfg.telnetPort}; tamponda ${waiting} bayt bekliyor${cfg.telnetMode ? '; telnet anlaşması açık' : ''}`}</title>
+            <title>{`TCP port ${cfg.telnetPort}; tamponda ${waiting} bayt bekliyor${cfg.telnetMode ? '; telnet anlaşması açık' : ''}${shareNote}`}</title>
           </g>
         );
       }
@@ -15017,7 +15018,7 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
             onFocus={() => setTerminalWins((prev) => (prev[prev.length - 1]?.id === w.id ? prev : [...prev.filter((p) => p.id !== w.id), w]))}
             onClose={() => setTerminalWins((prev) => prev.filter((p) => p.id !== w.id))}
             onClear={() => setTerminalClearedAt((prev) => ({ ...prev, [w.id]: comp.state.telnetTxCount ?? 0 }))}
-            onType={(bytes) => telnetRef.current.poke(w.id, (c) => telnetReceive(c, bytes))}
+            onType={(bytes) => telnetReceivePort(getIo5cConfig(comp).telnetPort, bytes)}
             onSetLan={(on) => {
               ldsNet
                 ?.setLan(on)

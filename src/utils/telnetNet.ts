@@ -1,6 +1,6 @@
 // Telnet part network layer (Aşama 5c-2b). The desktop app's preload exposes `window.ldsNet` (the Electron main
 // process runs one TCP server per port, shared by every Telnet part on it, like Logisim-evolution's
-// TelnetServer.ServerHolder); the web version has no sockets, there the part's terminal window is its only client.
+// TelnetServer.ServerHolder); the web version has no sockets, there a part's terminal window is its port's only client.
 
 /** One TCP server as the main process reports it */
 export interface LdsNetStatus {

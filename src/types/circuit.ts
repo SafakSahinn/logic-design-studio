@@ -504,6 +504,14 @@ export interface CircuitComponentInstance {
     /** Telnet, set by the simulator: the inputs it last acted on, and whether it must act again (a byte arrived, a setting changed) */
     telnetSig?: string;
     telnetDirty?: boolean;
+    /**
+     * Telnet, set by the simulator: '<part id>|<port>' once the part uses its port's shared server, and that
+     * server's buffer length (the last length a part on the port gave it); telnetSrv names the server's life
+     * ('<id>|<port>|<telnetTxCount when it started>'), so the network layer passes each sent byte on once
+     */
+    telnetJoin?: string;
+    telnetSrvBuf?: number;
+    telnetSrv?: string;
     /** RGB video (evolution 'RGB Video'): colour model ('color'), reset kind ('reset'), cursor off ('cursor' = No Cursor) */
     videoColor?: 'rgb888' | 'rgb555' | 'rgb565' | 'rgb444' | 'rgb111' | 'atari' | 'xterm16' | 'xterm256' | 'gray4' | 'vga256';
     videoReset?: 'async' | 'sync';

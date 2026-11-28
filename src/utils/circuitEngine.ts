@@ -1397,9 +1397,13 @@ export function ttyScreen(comp: CircuitComponentInstance): { rows: string[]; cur
 
 // ---- Telnet: TelnetServer.ByteBuffer (bytes received from the client) and the bytes sent to it
 
-/** Bytes from the Telnet client (TelnetServer.dataReceived, after telnet escapes are removed): kept while the buffer has room */
+/**
+ * Bytes from the Telnet client (TelnetServer.dataReceived, after telnet escapes are removed): kept while the
+ * server's buffer has room. The server is shared by the parts on one port, so the caller gives the bytes to each
+ * of them; their copies stay identical.
+ */
 export function telnetReceive(comp: CircuitComponentInstance, bytes: number[]): CircuitComponentInstance {
-  const cap = getIo5cConfig(comp).telnetBufLen;
+  const cap = comp.state.telnetSrvBuf ?? getIo5cConfig(comp).telnetBufLen;
   let rx = comp.state.telnetRx ?? '';
   for (const b of bytes) if (rx.length < cap) rx += String.fromCharCode(b & 0xff);
   return { ...comp, state: { ...comp.state, telnetRx: rx, telnetDirty: true } };
@@ -1412,6 +1416,38 @@ export function telnetSent(comp: CircuitComponentInstance, from: number): { byte
   const first = count - tx.length;
   const start = Math.max(from, first) - first;
   return { bytes: Array.from(tx.slice(start), (c) => c.charCodeAt(0)), count };
+}
+
+/**
+ * Bytes the circuit sent since the last call, once per server: the Telnet parts on one port share one server
+ * (state.telnetSrv names it) and so one sent log, every part's copy the same, so the mark is kept per server and
+ * only the first of its parts passes the new bytes on. `seen` is the caller's memory between calls ('p:<part id>'
+ * and 's:<server>' marks). A server met for the first time starts at its own start count, unless its part is met
+ * for the first time too (a loaded file, a part placed by undo): then what it sent before is history and nothing
+ * is passed on.
+ */
+export function telnetOutgoing(
+  components: readonly CircuitComponentInstance[],
+  seen: Map<string, number>
+): Array<{ id: string; port: number; bytes: number[] }> {
+  const out: Array<{ id: string; port: number; bytes: number[] }> = [];
+  for (const c of components) {
+    if (c.type !== 'telnet') continue;
+    const srv = c.state.telnetSrv;
+    const newPart = !seen.has(`p:${c.id}`);
+    seen.set(`p:${c.id}`, 1);
+    if (!srv) continue;
+    // the server's other parts find their mark already at the shared count
+    const count = c.state.telnetTxCount ?? 0;
+    const key = `s:${srv}`;
+    const start = Number(srv.slice(srv.lastIndexOf('|') + 1)) || 0;
+    const from = seen.get(key) ?? (newPart ? count : start);
+    seen.set(key, count);
+    if (count <= from) continue;
+    const { bytes } = telnetSent(c, from);
+    if (bytes.length) out.push({ id: c.id, port: getIo5cConfig(c).telnetPort, bytes });
+  }
+  return out;
 }
 
 // ---- Logisim-evolution std/io RGB Video of Aşama 5d ----------------------------------------------------------
@@ -6641,6 +6677,29 @@ export function simulateCircuitStep(
         // OUT is x while RD is not 1 (evolution sets a 1-bit unknown on the 8-bit port: a pin shows it unknown,
         // while a splitter would read bits 1-7 as errors). Sent: the input byte; 0 for an input wired to nothing
         // (NIL), 255 for an undefined one (toLongValue() = -1).
+        // Parts on the same port share one TelnetServer (ServerHolder): its receive buffer, buffer length, previous
+        // clock level and sent bytes. Here every part on the port in this circuit keeps an identical copy, written
+        // back to all of them below. A part joins its port's server the first time it runs there (telnetJoin):
+        // joining a server other parts already use empties its buffer and sets its length (getServer's deleteAll +
+        // setBufferSize); a part alone on its port keeps its own copy (evolution's fresh server). Not followed:
+        // ServerHolder keeps a server after its last part left, with that part's last clock level, so a part coming
+        // to the port later can take the port change itself as a clock edge; here a port change forgets the level.
+        // Only the parts of one circuit share (evolution's holder is app-wide; parts inside an IC have no network).
+        const tcfg = getIo5cConfig(comp);
+        const joinKey = `${comp.id}|${tcfg.telnetPort}`;
+        const peers = newComps.filter(
+          (c) => c !== comp && c.type === 'telnet' && c.state.telnetJoin === `${c.id}|${tcfg.telnetPort}` && getIo5cConfig(c).telnetPort === tcfg.telnetPort
+        );
+        const share = () => {
+          for (const p of peers) {
+            p.state.telnetRx = comp.state.telnetRx;
+            p.state.telnetSrvBuf = comp.state.telnetSrvBuf;
+            p.state.lastClk = comp.state.lastClk;
+            p.state.telnetTx = comp.state.telnetTx;
+            p.state.telnetTxCount = comp.state.telnetTxCount;
+            p.state.telnetSrv = comp.state.telnetSrv;
+          }
+        };
         const pinOf = (k: string) => comp.inputs.find((p) => pinKey(comp, p) === k);
         const inPin = pinOf('in');
         const inBits = readBits(inPin, 8);
@@ -6649,9 +6708,30 @@ export function simulateCircuitStep(
         const wr = readBits(pinOf('wr'), 1)[0];
         const rd = readBits(pinOf('rd'), 1)[0];
         const sig = `${open ? 'N' : inBits.join('')}|${clk}|${wr}|${rd}`;
-        if (sig === comp.state.telnetSig && !comp.state.telnetDirty) break;
+        const joined = comp.state.telnetJoin === joinKey;
+        if (sig === comp.state.telnetSig && !comp.state.telnetDirty && joined) break;
         comp.state.telnetSig = sig;
         comp.state.telnetDirty = undefined;
+        if (!joined) {
+          comp.state.telnetJoin = joinKey;
+          comp.state.telnetSrvBuf = tcfg.telnetBufLen;
+          if (peers.length > 0) {
+            const s = peers[0].state;
+            comp.state.telnetRx = undefined;
+            comp.state.lastClk = s.lastClk;
+            comp.state.telnetTx = s.telnetTx;
+            comp.state.telnetTxCount = s.telnetTxCount;
+            comp.state.telnetSrv = s.telnetSrv;
+          } else {
+            comp.state.telnetSrv = `${joinKey}|${comp.state.telnetTxCount ?? 0}`;
+          }
+        }
+        // Telnet.getData: a part whose buffer length differs from the server's gives the server a new, empty buffer
+        // (so parts with different lengths on one port keep emptying it)
+        if (comp.state.telnetSrvBuf !== tcfg.telnetBufLen) {
+          comp.state.telnetSrvBuf = tcfg.telnetBufLen;
+          comp.state.telnetRx = undefined;
+        }
         const prev = comp.state.lastClk;
         comp.state.lastClk = clk;
         const rx = comp.state.telnetRx ?? '';
@@ -6668,6 +6748,7 @@ export function simulateCircuitStep(
           }
           if (rd === 1 && rx !== '') comp.state.telnetRx = rx.slice(1);
         }
+        share();
         break;
       }
       case 'rgbVideo': {

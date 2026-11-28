@@ -1,5 +1,6 @@
-// Telnet part terminal window (Aşama 5c-2b): shows the bytes the circuit sent through the part and sends what is
-// typed into it to the part, like a Telnet client would. Draggable by its title bar; one per part.
+// Telnet part terminal window (Aşama 5c-2b): shows the bytes the circuit sent through the part's port (the parts
+// on one port share the sent log, 7d-1) and sends what is typed into it to the port, like a Telnet client would.
+// Draggable by its title bar; one per part.
 import React, { useEffect, useLayoutEffect, useRef } from 'react';
 import { Eraser, Network, X } from 'lucide-react';
 import type { CircuitComponentInstance } from '../types/circuit';
@@ -148,7 +149,7 @@ export const TelnetTerminalWindow: React.FC<TelnetTerminalWindowProps> = (props)
         <div className="flex items-center gap-2">
           <span className={`flex-1 min-w-0 ${st.tone === 'warn' ? 'break-words' : 'truncate'} ${toneCls}`} title={st.text}>{st.text}</span>
           <span className={`shrink-0 font-mono ${dark ? 'text-slate-400' : 'text-slate-500'}`} title="İstemciden gelip devrenin henüz okumadığı baytlar">
-            tampon {waiting}/{cfg.telnetBufLen}
+            tampon {waiting}/{comp.state.telnetSrvBuf ?? cfg.telnetBufLen}
           </span>
         </div>
         {desktop && (
