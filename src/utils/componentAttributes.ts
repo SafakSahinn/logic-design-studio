@@ -1826,7 +1826,7 @@ const rtcTypeAttr: AttrDef = {
   key: 'rtcType',
   label: 'Zaman',
   kind: 'buttons',
-  title: "1 Ocak 1970'ten beri geçen milisaniye ya da saniye; çıkış bu 64 bitlik değerin alt 32 biti",
+  title: "1 Ocak 1970'ten beri geçen milisaniye ya da saniye; bu 64 bitlik değerin alt 32 biti T[31:0], üst 32 biti T[63:32] çıkışında",
   options: [
     { value: 'ms', label: 'Milisaniye' },
     { value: 's', label: 'Saniye' },

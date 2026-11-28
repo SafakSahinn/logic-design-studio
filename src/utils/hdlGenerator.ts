@@ -45,7 +45,7 @@ import {
   getPlaRomConfig,
   plaMatch,
   portPokeOf,
-  rtcValue,
+  rtcWords,
 } from './circuitEngine';
 import { getSubcircuitDefinition, subcircuitPortWidth } from './subcircuitManager';
 import { formatEng, formatMonoWidth, monoWidthNanos, ttlChipOf, ttlPinOfKey, ttlRcOf } from './ttlChips';
@@ -481,7 +481,10 @@ function buildModule(
       if (c.type === 'joystick') {
         const bits = getIo5Config(c).joyBits;
         c.outputs.slice(0, 2).forEach((p, i) => pinExpr.has(p.id) || setWideConstant(p.id, joystickValue((i ? c.state.joyY : c.state.joyX) ?? 0, bits), bits));
-      } else if (c.outputs[0] && !pinExpr.has(c.outputs[0].id)) setWideConstant(c.outputs[0].id, rtcValue(getIo5Config(c).rtcType), 32);
+      } else {
+        const words = rtcWords(getIo5Config(c).rtcType);
+        c.outputs.slice(0, 2).forEach((p, i) => pinExpr.has(p.id) || setWideConstant(p.id, words[i], 32));
+      }
       continue;
     }
     if (spec.subPorts && c.type === 'slider') {
@@ -560,10 +563,19 @@ function buildModule(
       addPort({ name: pn, dir: 'in', width: outW, source: { compId: c.id, type: c.type, pins: c.outputs.slice(0, 1).map((p) => p.id) } });
       if (c.outputs[0]) pinExpr.set(c.outputs[0].id, pn);
     } else if (c.type === 'realTimeClock') {
-      // The low 32 bits of the time, from outside (evolution has no HDL for the clock; an FPGA has no wall clock)
+      // The 64-bit time from outside, one port (evolution has no HDL for the clock; an FPGA has no wall clock). The
+      // T[31:0] / T[63:32] outputs read its halves through a signal each (a wide pin's bits index a plain name)
+      const outs = c.outputs.slice(0, 2);
       const pn = names.make(`in_${label}`, 'in_rtc');
-      addPort({ name: pn, dir: 'in', width: 32, source: { compId: c.id, type: c.type, pins: c.outputs.slice(0, 1).map((p) => p.id) } });
-      if (c.outputs[0]) pinExpr.set(c.outputs[0].id, pn);
+      addPort({ name: pn, dir: 'in', width: 32 * Math.max(1, outs.length), source: { compId: c.id, type: c.type, pins: outs.map((p) => p.id) } });
+      if (outs.length === 1) pinExpr.set(outs[0].id, pn);
+      else
+        outs.forEach((p, i) => {
+          const s = names.make(`${pn}_${i ? 'hi' : 'lo'}`, 'rtc_word');
+          declare(s, 32);
+          body.push(L.assign(s, lang === 'verilog' ? `${pn}[${32 * i + 31}:${32 * i}]` : `${pn}(${32 * i + 31} downto ${32 * i})`));
+          pinExpr.set(p.id, s);
+        });
     } else if (c.type === 'asciiKeyboard') {
       const pd = names.make(`kbd_${label}_data`, 'kbd_data');
       const ps = names.make(`kbd_${label}_strobe`, 'kbd_strobe');

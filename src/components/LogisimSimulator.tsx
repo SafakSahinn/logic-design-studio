@@ -6709,7 +6709,9 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
         const d = eh - 4 - off;
         const cx = Math.floor((eh - d) / 2) + d / 2;
         const cy = off + 1 + d / 2;
-        const v = comp.outputs[0]?.bits ? bitsToNumber(comp.outputs[0].bits) : undefined;
+        const word = (i: number) => (comp.outputs[i]?.bits ? bitsToNumber(comp.outputs[i].bits!) : undefined);
+        const lo = word(0);
+        const v = lo === undefined ? undefined : (word(1) ?? 0) * 2 ** 32 + lo;
         return (
           <g>
             <rect x={0} y={0} width={2 * eh} height={2 * eh} fill="#ffffff" stroke={isSelected ? '#3b82f6' : io5Stroke} strokeWidth={isSelected ? 3 : 2.5} />
@@ -6719,7 +6721,7 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
             <text x={4} y={2 * (off - 1)} fill="#000000" style={{ fontSize: narrow ? 12 : 26, fontWeight: 700, fontFamily: 'sans-serif' }} className="select-none">
               Time
             </text>
-            <title>{`${getIo5Config(comp).rtcType === 's' ? 'saniye' : 'milisaniye'} (alt 32 bit): ${v ?? '?'}`}</title>
+            <title>{`${getIo5Config(comp).rtcType === 's' ? 'saniye' : 'milisaniye'}: ${v ?? '?'}`}</title>
           </g>
         );
       }

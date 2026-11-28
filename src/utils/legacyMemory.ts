@@ -16,6 +16,7 @@ import type { CircuitComponentInstance, CircuitPin, CircuitWire, CustomSubcircui
 import { configureRam, createComponentInstance, pinKey, updatePinPositions, type RamConfig } from './circuitEngine';
 import { repairWires, rerouteWiresToRemappedPins, snapPt10, snapTo10 } from './wiringEngine';
 import { upgradeJoystickPins } from './legacyJoystick';
+import { upgradeRtcPins } from './legacyRtc';
 
 export type LegacyRamBus = 'combined' | 'asynch' | 'separate';
 
@@ -183,9 +184,14 @@ export function upgradeLegacyCircuit<T extends { components?: CircuitComponentIn
   const mem = upgradeLegacyMemories(circuit.components ?? [], circuit.wires ?? []);
   // joysticks turned south / west whose pins moved to evolution's order (7b-2): their wires follow the pins
   const joy = upgradeJoystickPins(mem.components, mem.wires);
-  const { components, wires } = joy;
+  // real-time clocks from before 7c-1 get their T[63:32] output
+  const rtc = upgradeRtcPins(joy.components);
+  const { components } = rtc;
+  const { wires } = joy;
   const report = mem.report;
-  return report.converted || joy.moved ? { circuit: { ...circuit, components, wires }, report } : { circuit, report };
+  return report.converted || joy.moved || rtc.added
+    ? { circuit: { ...circuit, components, wires }, report }
+    : { circuit, report };
 }
 
 /** The same for a custom IC's inside */

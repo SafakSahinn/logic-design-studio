@@ -108,6 +108,12 @@ function plan(
     // A pass / two-way switch's lever is held where it is on the canvas (a test vector cannot move it)
     else if (comp && EXTRA_SWITCH_TYPES.has(comp.type)) bits = [comp.state.switchClosed ? 1 : 0];
     else if (comp?.type === 'portIo') bits = Array.from({ length: p.width }, (_, k) => portPokeOf(comp, k) as Bit);
+    // A real-time clock's one port is its outputs side by side (T[31:0], then T[63:32])
+    else if (comp?.type === 'realTimeClock')
+      bits = pins.flatMap((id) => {
+        const q = pinOf(id);
+        return Array.from({ length: q?.width ?? 1 }, (_, k): Bit => (q?.bits?.[k] === 1 ? 1 : 0));
+      });
     else if (pins.length === 1 && p.width > 1) {
       const q = pinOf(pins[0]);
       bits = Array.from({ length: p.width }, (_, k) => (q?.bits?.[k] === 1 ? 1 : 0));

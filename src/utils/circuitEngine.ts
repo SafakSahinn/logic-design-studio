@@ -630,7 +630,7 @@ function io5PinKeys(type: ComponentType, cfg: Io5Config): { inputs: string[]; ou
       if (cfg.portDir === 'output') return { inputs: ['in'], outputs: [] };
       return { inputs: ['en', 'in'], outputs: ['out'] };
     case 'realTimeClock':
-      return { inputs: [], outputs: ['out'] };
+      return { inputs: [], outputs: ['out', 'hi'] };
     default:
       return { inputs: [], outputs: [] };
   }
@@ -645,7 +645,7 @@ function io5PinWidth(type: ComponentType, key: string, cfg: Io5Config): number {
 
 function io5PinLabel(type: ComponentType, key: string): string {
   if (type === 'matrixKeypad') return `${key[0].toUpperCase()}${Number(key.slice(1)) + 1}`;
-  if (type === 'realTimeClock') return 'T';
+  if (type === 'realTimeClock') return key === 'hi' ? 'T[63:32]' : 'T[31:0]';
   return key.toUpperCase();
 }
 
@@ -682,9 +682,10 @@ export function io5Geometry(type: ComponentType, cfg: Io5Config): { width: numbe
       return { width, height: 100, pins };
     }
     case 'realTimeClock': {
-      // evolution's default facing east: the 64-bit output on the right side, body 40 x 40 (medium) or 20 x 20 (narrow)
+      // evolution's default facing east: the 64-bit output on the right side, body 40 x 40 (medium) or 20 x 20 (narrow).
+      // Our widest wire is 32 bits: the low half stays where evolution's one output is, the high half one step below
       const s = cfg.rtcSize === 'narrow' ? 40 : 80;
-      return { width: s, height: s, pins: { out: { x: s, y: s / 2 } } };
+      return { width: s, height: s, pins: { out: { x: s, y: s / 2 }, hi: { x: s, y: s / 2 + 20 } } };
     }
     default:
       return { width: 40, height: 40, pins: {} };
@@ -887,11 +888,17 @@ function clockTickOf(components: CircuitComponentInstance[]): number {
 export function setRtcClock(fn?: () => number): void {
   rtcClock = fn ?? (() => Date.now());
 }
-/** The real-time clock's output: the low 32 bits of evolution's 64-bit epoch milliseconds / seconds */
+/** The low 32 bits of the real-time clock's 64-bit value (evolution's epoch milliseconds / seconds) */
 export function rtcValue(type: 'ms' | 's'): number {
+  return rtcWords(type)[0];
+}
+/** The real-time clock's 64-bit value as [low 32 bits, high 32 bits] (the T[31:0] and T[63:32] outputs) */
+export function rtcWords(type: 'ms' | 's'): [number, number] {
   const now = rtcFrozen ?? rtcClock();
   const v = type === 's' ? Math.floor(now / 1000) : Math.floor(now);
-  return ((v % 2 ** 32) + 2 ** 32) % 2 ** 32;
+  const lo = ((v % 2 ** 32) + 2 ** 32) % 2 ** 32;
+  const hi = ((Math.floor(v / 2 ** 32) % 2 ** 32) + 2 ** 32) % 2 ** 32;
+  return [lo, hi];
 }
 
 /** RGB LED colour bits (bit 0 red, 1 green, 2 blue) as evolution paints them: an input lights only on a 1 (active low: inverted) */
@@ -2724,7 +2731,7 @@ const BUILT_IN_CATALOG: Record<Exclude<ComponentType, PartId>, ComponentMetadata
   keyboard: io5cMeta('keyboard', 'Klavye', 'Yazılan karakterleri 1-256 karakterlik bir tamponda biriktirir: OUT tamponun ilk karakterinin 7 bitlik ASCII kodu, AV tampon boş değilken 1; RE açıkken saat kenarı ilk karakteri tampondan alır, CLR tamponu boşaltır. Parçayı seçip yazın (← → Home End Delete ile düzenlenir)'),
   tty: io5cMeta('tty', 'Metin Terminali', 'Satır x sütun metin ekranı: WE açıkken her saat kenarında IN girişindeki 7 bitlik ASCII karakteri yazar; satır sonu (10/13) yeni satıra geçer, geri silme (8) son karakteri siler, form besleme (12) ve CLR ekranı temizler, en altta satırlar yukarı kayar'),
   telnet: io5cMeta('telnet', 'Telnet', 'Devre ile bir Telnet istemcisi arasında bayt alıp verir: istemciden gelen baytlar tamponda bekler, AV doluyken 1; RD = 1 iken OUT ilk baytı gösterir ve yükselen saat kenarı onu tampondan alır, WR = 1 iken saat kenarı IN baytını istemciye gönderir'),
-  realTimeClock: io5Meta('realTimeClock', 'Gerçek Zamanlı Saat', 'Bilgisayarın saatini veren 32 bitlik çıkış: 1970 yılından beri geçen milisaniye ya da saniye (64 bitlik değerin alt 32 biti)'),
+  realTimeClock: io5Meta('realTimeClock', 'Gerçek Zamanlı Saat', 'Bilgisayarın saatini veren 64 bitlik değer: 1970 yılından beri geçen milisaniye ya da saniye; alt 32 biti T[31:0], üst 32 biti T[63:32] çıkışında'),
   asciiKeyboard: {
     type: 'asciiKeyboard',
     name: 'ASCII Klavye Giriş Matrisi',
@@ -6514,9 +6521,13 @@ export function simulateCircuitStep(
         if (comp.outputs.length) setBitsOut(0, portIoPins(comp));
         break;
       }
-      case 'realTimeClock':
-        setBitsOut(0, numberToBits(rtcValue(getIo5Config(comp).rtcType), 32));
+      case 'realTimeClock': {
+        // evolution's one 64-bit output as two 32-bit ones (a clock of an older file may still have only the low one)
+        const [lo, hi] = rtcWords(getIo5Config(comp).rtcType);
+        setBitsOut(0, numberToBits(lo, 32));
+        if (comp.outputs.length > 1) setBitsOut(1, numberToBits(hi, 32));
         break;
+      }
       case 'keyboard': {
         // Keyboard.propagate: the clock level is always recorded; CLR = 1 empties the buffer, otherwise an edge
         // (RE not 0) takes the first character; OUT = its low 7 bits, AV = 1 unless it is NUL (or the buffer is empty)
