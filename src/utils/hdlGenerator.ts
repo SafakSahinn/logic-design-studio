@@ -45,6 +45,7 @@ import {
   getPlaRomConfig,
   plaMatch,
   portPokeOf,
+  PORT_IO_BUS,
   rtcWords,
 } from './circuitEngine';
 import { getSubcircuitDefinition, subcircuitPortWidth } from './subcircuitManager';
@@ -2219,53 +2220,75 @@ function buildModule(
         const label = c.label || c.type;
         const cfg = getIo5Config(c);
         const n = cfg.portSize;
+        // Over 32 pins the port is two buses on our side (pins 0-31: en / in / out, pins 32-63: en1 / in1 / out1);
+        // the HDL port is still one n-bit vector, as in evolution
         const idxOf = (k: string) => c.inputs.findIndex((p) => pinKey(c, p) === k);
+        const buses = [
+          { lo: 0, w: Math.min(n, PORT_IO_BUS), sfx: '' },
+          { lo: PORT_IO_BUS, w: n - PORT_IO_BUS, sfx: '1' },
+        ].filter((b) => b.w > 0);
         const enI = idxOf('en');
-        const inI = idxOf('in');
-        const o = c.outputs.length ? { pin: c.outputs[0], sig: out[0] } : undefined;
-        const at = (sig: string, i: number) => (n === 1 ? sig : vecIndex(sig, i));
-        const dataBits = () => (inI >= 0 ? wideBits(inI).map(bitExpr) : Array<string>(n).fill(L.zero));
+        const busIns = buses.map((b) => ({ ...b, inI: idxOf(`in${b.sfx}`), enI: cfg.portDir === 'inoutSingle' ? enI : idxOf(`en${b.sfx}`) }));
+        const outs = buses.flatMap((b, k) => (c.outputs[k] ? [{ ...b, pin: c.outputs[k], sig: out[k] }] : []));
+        // bits lo .. lo + w - 1 of an n-bit vector (the whole vector, or one bit, as needed)
+        const slice = (sig: string, lo: number, w: number) =>
+          n === 1 ? sig : lo === 0 && w === n ? sig : w === 1 ? vecIndex(sig, lo) : lang === 'verilog' ? `${sig}[${lo + w - 1}:${lo}]` : `${sig}(${lo + w - 1} downto ${lo})`;
+        const hiZw = (w: number) => (w > 1 ? (lang === 'verilog' ? `${w}'bz` : "(others => 'Z')") : L.hiZ);
+        const wideOf = (i: number, w: number): Bit[] => (i >= 0 ? wideBits(i) : Array<Bit>(w).fill({ k: 'lit', v: 0 }));
+        const dataRaw = (): Bit[] => busIns.flatMap((b) => wideOf(b.inI, b.w));
+        const dataBits = () => dataRaw().map(bitExpr);
         const enBits = (): string[] => {
           if (enI < 0) return [];
           if (cfg.portDir === 'inoutSingle' || n === 1) return Array<string>(n).fill(inp(enI));
-          return wideBits(enI).map(bitExpr);
+          return busIns.flatMap((b) => wideOf(b.enI, b.w)).map(bitExpr);
         };
-        const hiZn = n > 1 ? (lang === 'verilog' ? `${n}'bz` : "(others => 'Z')") : L.hiZ;
+        // output signal bit i (pin i of the port)
+        const outAt = (i: number) => {
+          const o = outs.find((b) => i >= b.lo && i < b.lo + b.w);
+          return o ? (o.w === 1 ? o.sig : vecIndex(o.sig, i - o.lo)) : undefined;
+        };
         if (!spec.subPorts) {
           if (cfg.portDir === 'input') {
             const pn = names.make(`in_${label}`, 'in_port');
-            addPort({ name: pn, dir: 'in', width: n, source: { compId: c.id, type: c.type, pins: o ? [o.pin.id] : [] } });
-            if (o) emit(o.sig, pn);
+            addPort({ name: pn, dir: 'in', width: n, source: { compId: c.id, type: c.type, pins: outs.map((o) => o.pin.id) } });
+            outs.forEach((o) => emit(o.sig, slice(pn, o.lo, o.w)));
           } else if (cfg.portDir === 'output') {
             const pn = names.make(`out_${label}`, 'out_port');
-            addPort({ name: pn, dir: 'out', width: n, source: { compId: c.id, type: c.type, pins: inI >= 0 ? [c.inputs[inI].id] : [] } });
-            emit(pn, n === 1 ? (inI >= 0 ? inp(inI) : L.zero) : compose(inI >= 0 ? wideBits(inI) : Array<Bit>(n).fill({ k: 'lit', v: 0 })));
+            const inI = busIns[0].inI;
+            addPort({ name: pn, dir: 'out', width: n, source: { compId: c.id, type: c.type, pins: busIns.filter((b) => b.inI >= 0).map((b) => c.inputs[b.inI].id) } });
+            emit(pn, n === 1 ? (inI >= 0 ? inp(inI) : L.zero) : compose(dataRaw()));
           } else {
             const pn = names.make(`io_${label}`, 'io_port');
-            addPort({ name: pn, dir: 'inout', width: n, source: { compId: c.id, type: c.type, pins: o ? [o.pin.id] : [] } });
-            const enOpen = enI < 0 || !isConnected(c.inputs[enI].id);
-            const inOpen = inI < 0 || !isConnected(c.inputs[inI].id);
-            if (enOpen || inOpen) {
-              // As evolution: no drive when the enable or the data is unconnected (the pins stay inputs)
-              body.push(L.comment(`${label}: ${enOpen ? 'EN' : 'veri girişi'} boşta, port sürülmez (yalnız okunur)`));
-              // VHDL: an inout port nothing assigns drives its default 'U' (Verilog: an undriven wire is z already,
-              // and a constant z would let synthesis fold the read-back to z)
-              if (lang === 'vhdl') emit(pn, hiZn);
-              if (!enOpen) warnings.push(`${label}: veri girişi boşta, port sürülmez; simülatörde EN = 1 iken pinler E (çakışma) olur.`);
-            } else if (cfg.portDir === 'inoutSingle' || n === 1) {
-              const d = n === 1 ? inp(inI) : asName(compose(wideBits(inI)), n, `${nm}_d`);
-              emit(pn, L.mux(lang === 'vhdl' ? wrap(inp(enI)) : inp(enI), d, hiZn));
-            } else {
-              const d = dataBits();
-              enBits().forEach((e, i) => emit(vecIndex(pn, i), L.mux(lang === 'vhdl' ? wrap(e) : e, d[i], L.hiZ)));
+            addPort({ name: pn, dir: 'inout', width: n, source: { compId: c.id, type: c.type, pins: outs.map((o) => o.pin.id) } });
+            for (const b of busIns) {
+              const enOpen = b.enI < 0 || !isConnected(c.inputs[b.enI].id);
+              const inOpen = b.inI < 0 || !isConnected(c.inputs[b.inI].id);
+              const part = slice(pn, b.lo, b.w);
+              const what = buses.length > 1 ? ` (bacak ${b.lo}-${b.lo + b.w - 1})` : '';
+              if (enOpen || inOpen) {
+                // As evolution: no drive when the enable or the data is unconnected (the pins stay inputs)
+                body.push(L.comment(`${label}${what}: ${enOpen ? `EN${b.enI === enI ? '' : b.sfx}` : `veri girişi`} boşta, port sürülmez (yalnız okunur)`));
+                // VHDL: an inout port nothing assigns drives its default 'U' (Verilog: an undriven wire is z already,
+                // and a constant z would let synthesis fold the read-back to z)
+                if (lang === 'vhdl') emit(part, hiZw(b.w));
+                if (!enOpen) warnings.push(`${label}${what}: veri girişi boşta, port sürülmez; simülatörde EN = 1 iken pinler E (çakışma) olur.`);
+              } else if (cfg.portDir === 'inoutSingle' || n === 1) {
+                const d = n === 1 ? inp(b.inI) : asName(compose(wideBits(b.inI)), b.w, `${nm}_d${b.sfx}`);
+                emit(part, L.mux(lang === 'vhdl' ? wrap(inp(b.enI)) : inp(b.enI), d, hiZw(b.w)));
+              } else {
+                const d = wideBits(b.inI).map(bitExpr);
+                wideBits(b.enI)
+                  .map(bitExpr)
+                  .forEach((e, i) => emit(vecIndex(pn, b.lo + i), L.mux(lang === 'vhdl' ? wrap(e) : e, d[i], L.hiZ)));
+              }
             }
-            if (o) emit(o.sig, pn);
+            outs.forEach((o) => emit(o.sig, slice(pn, o.lo, o.w)));
           }
           break;
         }
         // Inside an IC (no pins of its own): the levels set on the pins are constants (floating = z); in/out shows
         // the data while the enable is 1, else the set level, as in the simulator (an output-only port drives nothing)
-        if (!o) {
+        if (!outs.length) {
           body.push(L.comment(`${label}: IC içinde yalnız çıkış portu dışarı bağlanmaz`));
           break;
         }
@@ -2274,12 +2297,18 @@ function buildModule(
           return v === 'Z' ? L.hiZ : v === 1 ? L.one : L.zero;
         });
         if (cfg.portDir === 'input') {
-          poke.forEach((v, i) => emit(at(o.sig, i), v));
+          poke.forEach((v, i) => {
+            const lhs = outAt(i);
+            if (lhs) emit(lhs, v);
+          });
           break;
         }
         const d = dataBits();
         const en = enBits();
-        poke.forEach((v, i) => emit(at(o.sig, i), L.mux(lang === 'vhdl' ? wrap(en[i]) : en[i], d[i], v)));
+        poke.forEach((v, i) => {
+          const lhs = outAt(i);
+          if (lhs) emit(lhs, L.mux(lang === 'vhdl' ? wrap(en[i]) : en[i], d[i], v));
+        });
         break;
       }
       case 'keyboard':

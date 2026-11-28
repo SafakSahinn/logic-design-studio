@@ -11,6 +11,7 @@ import {
   restartPor,
   tickClocks,
   getInputSignalNames,
+  portPokeState,
   simulateCircuit,
 } from './circuitEngine';
 import { getTopLevelPorts } from './hdlGenerator';
@@ -78,10 +79,12 @@ export function parseVectorValue(token: string, width: number, allowUnknown: boo
   if (/^0b[01x]+$/i.test(t)) return fromDigits(t.slice(2), 1);
   if (/^[01x]+$/i.test(t) && t.length === width) return fromDigits(t, 1);
   if (/^-?\d+$/.test(t)) {
-    let n = Number(t);
-    if (!Number.isSafeInteger(n) || n >= 2 ** width || n < -(2 ** (width - 1))) return `${t} ${width} bite sığmıyor`;
-    if (n < 0) n += 2 ** width;
-    return Array.from({ length: width }, (_, k) => (Math.floor(n / 2 ** k) % 2) as 0 | 1);
+    // BigInt: a column can be up to 64 bits wide
+    let n = BigInt(t);
+    const span = 1n << BigInt(width);
+    if (n >= span || n < -(span >> 1n)) return `${t} ${width} bite sığmıyor`;
+    if (n < 0n) n += span;
+    return Array.from({ length: width }, (_, k) => Number((n >> BigInt(k)) & 1n) as 0 | 1);
   }
   return `geçersiz değer: ${t} (${width} bit: ${width} ikilik rakam, 0x… ya da ondalık)`;
 }
@@ -281,7 +284,7 @@ export function parseTestVector(
     if (s >= 0) {
       const e = tok.indexOf(']');
       const w = Number(tok.slice(s + 1, e));
-      if (e !== tok.length - 1 || s === 0 || e === s + 1 || !Number.isInteger(w) || w < 1 || w > 32) {
+      if (e !== tok.length - 1 || s === 0 || e === s + 1 || !Number.isInteger(w) || w < 1 || w > 64) {
         errors.push(`Başlıkta hatalı sütun: ${tok}`);
         colOfToken.push(-1);
         return;
@@ -418,15 +421,8 @@ function driveInput(comps: CircuitComponentInstance[], sig: TvSignal, cell: TvCe
   }
   if (c.type === 'portIo') {
     // An input-only port: the levels the user sets on its pins (floating = not set)
-    let k = 0;
-    let v = 0;
-    bits.forEach((b, i) => {
-      if (b === 0 || b === 1) k += 2 ** i;
-      if (b === 1) v += 2 ** i;
-    });
     if (bits.some((b) => b !== 0 && b !== 1 && b !== 'Z')) return `${sig.name}: Port I/O pini yalnız 0, 1 ya da boşta (Z) olur`;
-    st.portPokeKnown = k >>> 0;
-    st.portPokeVal = v >>> 0;
+    Object.assign(st, portPokeState(bits));
     return null;
   }
   if (c.type === 'switch' && sig.width > 1) {
@@ -456,6 +452,15 @@ function readSignal(comps: CircuitComponentInstance[], sig: TvSignal): SignalVal
     const p = pin(sig.pins[0]);
     const bits = p?.bits && p.bits.length === sig.width ? p.bits : Array<SignalValue>(sig.width).fill(p?.value ?? 'X');
     return [...bits];
+  }
+  // One signal on several wide pins (Port I/O over 32 pins, the real-time clock): the pins' bits side by side
+  const pins = sig.pins.map(pin);
+  if (sig.width > 1 && pins.some((p) => (p?.width ?? 1) > 1)) {
+    const bits = pins.flatMap((p) => {
+      const w = p?.width ?? 1;
+      return p?.bits && p.bits.length === w ? p.bits : Array<SignalValue>(w).fill(p?.value ?? 'X');
+    });
+    return Array.from({ length: sig.width }, (_, i) => bits[i] ?? 'X');
   }
   return sig.pins.map((id) => pin(id)?.value ?? 'X');
 }

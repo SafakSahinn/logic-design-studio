@@ -1799,7 +1799,7 @@ const portSizeAttr: AttrDef = {
   key: 'portSize',
   label: 'Bacak sayısı',
   kind: 'select',
-  title: `Porttaki bacak sayısı (1-${PORT_IO_MAX}; en geniş tel ${PORT_IO_MAX} bit). Bütün bacaklar tek veriyolundadır`,
+  title: `Porttaki bacak sayısı (1-${PORT_IO_MAX}). 32 bacağa kadar her yön tek veriyolundadır; 33-${PORT_IO_MAX} bacakta bacak 32-${PORT_IO_MAX - 1} ikinci bir veriyolundadır (EN1 / IN1 / OUT1; en geniş tel 32 bit)`,
   options: numberOptions(1, PORT_IO_MAX),
   get: (c) => getIo5Config(c).portSize,
   set: (c, v) => reconfigureIo5(c, { portSize: Number(v) }),

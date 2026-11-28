@@ -457,14 +457,18 @@ export interface CircuitComponentInstance {
     keypadSize?: 'normal' | 'large';
     /** Matrix keypad: labels of the A, B, C, D, *, # keys (evolution keyALabel ... keyHashLabel, raw mode); unset = the defaults */
     keypadKeys?: string[];
-    /** Port I/O: number of pins (evolution 'number', ours 1-32); unset = 8 */
+    /** Port I/O: number of pins (evolution 'number', 1-64; pins 32-63 on a second bus); unset = 8 */
     portSize?: number;
     /** Port I/O: evolution 'direction'; unset = inoutSingle */
     portDir?: 'input' | 'output' | 'inoutSingle' | 'inoutMulti';
     /** Port I/O: pins the user set by clicking (bit i known) and their levels (bit i = 1); unset = all floating */
     portPokeKnown?: number;
     portPokeVal?: number;
-    /** Port I/O, set by the simulator: bit 0 = enable input wired to nothing, bit 1 = data input wired to nothing
+    /** Port I/O: the same for pins 32-63 (bit i = pin 32 + i); unset = all floating */
+    portPokeKnownHi?: number;
+    portPokeValHi?: number;
+    /** Port I/O, set by the simulator: bit 0 = enable input wired to nothing, bit 1 = data input wired to nothing,
+     *  bits 2 / 3 = the same for the second bus (EN1 / IN1)
      *  (evolution reads such a port as NIL, not as unknown); unset = both wired */
     portOpen?: number;
     /** Real-time clock: evolution 'timeType' (epoch milliseconds / seconds); unset = ms */

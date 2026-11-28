@@ -580,7 +580,7 @@ export interface Io5Config {
   joyBits: number;
   keypadMode: 'raw' | 'pmod';
   keypadSize: 'normal' | 'large';
-  /** Port I/O pins, 1-32 (evolution allows 64 on one bus; ours stop at our widest wire) */
+  /** Port I/O pins, 1-64 (evolution: one 64-bit bus; ours: pins 32-63 on a second 32-bit bus per direction) */
   portSize: number;
   portDir: 'input' | 'output' | 'inoutSingle' | 'inoutMulti';
   rtcType: 'ms' | 's';
@@ -588,7 +588,9 @@ export interface Io5Config {
 }
 
 export const IO5_TYPES = new Set<ComponentType>(['rgbLed', 'joystick', 'matrixKeypad', 'portIo', 'realTimeClock']);
-export const PORT_IO_MAX = 32;
+export const PORT_IO_MAX = 64;
+/** Pins on one Port I/O bus (our widest wire); pins 32-63 take the second bus (en1 / in1 / out1) */
+export const PORT_IO_BUS = 32;
 export const JOYSTICK_RANGE = 14;
 /** Matrix keypad key labels, row-major (evolution KEY_LABELS_RAW / KEY_LABELS_PMOD_KYPD) */
 export const KEYPAD_LABELS_RAW = ['1', '2', '3', 'A', '4', '5', '6', 'B', '7', '8', '9', 'C', '*', '0', '#', 'D'];
@@ -625,10 +627,14 @@ function io5PinKeys(type: ComponentType, cfg: Io5Config): { inputs: string[]; ou
       return { inputs: [], outputs: ['x', 'y'] };
     case 'matrixKeypad':
       return { inputs: ['r0', 'r1', 'r2', 'r3'], outputs: ['c0', 'c1', 'c2', 'c3'] };
-    case 'portIo':
-      if (cfg.portDir === 'input') return { inputs: [], outputs: ['out'] };
-      if (cfg.portDir === 'output') return { inputs: ['in'], outputs: [] };
-      return { inputs: ['en', 'in'], outputs: ['out'] };
+    case 'portIo': {
+      const two = cfg.portSize > PORT_IO_BUS;
+      const outs = two ? ['out', 'out1'] : ['out'];
+      if (cfg.portDir === 'input') return { inputs: [], outputs: outs };
+      if (cfg.portDir === 'output') return { inputs: two ? ['in', 'in1'] : ['in'], outputs: [] };
+      if (!two) return { inputs: ['en', 'in'], outputs: outs };
+      return { inputs: cfg.portDir === 'inoutMulti' ? ['en', 'in', 'en1', 'in1'] : ['en', 'in', 'in1'], outputs: outs };
+    }
     case 'realTimeClock':
       return { inputs: [], outputs: ['out', 'hi'] };
     default:
@@ -638,7 +644,11 @@ function io5PinKeys(type: ComponentType, cfg: Io5Config): { inputs: string[]; ou
 
 function io5PinWidth(type: ComponentType, key: string, cfg: Io5Config): number {
   if (type === 'joystick') return cfg.joyBits;
-  if (type === 'portIo') return key === 'en' && cfg.portDir === 'inoutSingle' ? 1 : cfg.portSize;
+  if (type === 'portIo') {
+    if (key === 'en' && cfg.portDir === 'inoutSingle') return 1;
+    const w0 = Math.min(cfg.portSize, PORT_IO_BUS);
+    return key.endsWith('1') ? cfg.portSize - w0 : w0;
+  }
   if (type === 'realTimeClock') return 32;
   return 1;
 }
@@ -670,15 +680,24 @@ export function io5Geometry(type: ComponentType, cfg: Io5Config): { width: numbe
     }
     case 'portIo': {
       // evolution facing east: (10 + ceil(n / 2) * 10) x 50 for n >= 8 pins; enable on the left side at 10, the
-      // bus pins along the top edge from 10 on (input-only / output-only: the one bus at 10)
+      // bus pins along the top edge from 10 on (input-only / output-only: the one bus at 10). Over 32 pins the second
+      // bus (pins 32-63) comes after the first one's pins on the top edge (its enable on the left side below EN), so
+      // the first bus never moves when the pin count changes
       const n = Math.max(cfg.portSize, 8);
+      const two = cfg.portSize > PORT_IO_BUS;
       const width = 2 * (10 + Math.floor((n + 1) / 2) * 10);
       const pins: Record<string, { x: number; y: number }> =
         cfg.portDir === 'input'
-          ? { out: { x: 20, y: 0 } }
+          ? { out: { x: 20, y: 0 }, ...(two ? { out1: { x: 40, y: 0 } } : {}) }
           : cfg.portDir === 'output'
-            ? { in: { x: 20, y: 0 } }
-            : { en: { x: 0, y: 20 }, in: { x: 20, y: 0 }, out: { x: 40, y: 0 } };
+            ? { in: { x: 20, y: 0 }, ...(two ? { in1: { x: 40, y: 0 } } : {}) }
+            : {
+                en: { x: 0, y: 20 },
+                in: { x: 20, y: 0 },
+                out: { x: 40, y: 0 },
+                ...(two ? { in1: { x: 60, y: 0 }, out1: { x: 80, y: 0 } } : {}),
+                ...(two && cfg.portDir === 'inoutMulti' ? { en1: { x: 0, y: 40 } } : {}),
+              };
       return { width, height: 100, pins };
     }
     case 'realTimeClock': {
@@ -727,10 +746,13 @@ export function configureIo5(comp: CircuitComponentInstance, patch: Partial<Io5C
     state.keypadSize = cfg.keypadSize;
   } else if (comp.type === 'portIo') {
     const mask = cfg.portSize >= 32 ? 0xffffffff : 2 ** cfg.portSize - 1;
+    const maskHi = cfg.portSize <= 32 ? 0 : cfg.portSize >= 64 ? 0xffffffff : 2 ** (cfg.portSize - 32) - 1;
     state.portSize = cfg.portSize;
     state.portDir = cfg.portDir;
     state.portPokeKnown = ((state.portPokeKnown ?? 0) & mask) >>> 0;
     state.portPokeVal = ((state.portPokeVal ?? 0) & mask) >>> 0;
+    state.portPokeKnownHi = ((state.portPokeKnownHi ?? 0) & maskHi) >>> 0 || undefined;
+    state.portPokeValHi = ((state.portPokeValHi ?? 0) & maskHi) >>> 0 || undefined;
   } else if (comp.type === 'realTimeClock') {
     state.rtcType = cfg.rtcType;
     state.rtcSize = cfg.rtcSize;
@@ -818,9 +840,10 @@ export function keypadColumns(pressed: number, mode: 'raw' | 'pmod', rows: Signa
 /** Port I/O: a click on pin i cycles the level the user gives it: floating -> 0 -> 1 -> floating (evolution togglePokeValue) */
 export function togglePortPin(comp: CircuitComponentInstance, i: number): CircuitComponentInstance {
   if (i < 0 || i >= getIo5Config(comp).portSize) return comp;
-  const bit = 2 ** i;
-  let k = comp.state.portPokeKnown ?? 0;
-  let v = comp.state.portPokeVal ?? 0;
+  const hi = i >= PORT_IO_BUS;
+  const bit = 2 ** (hi ? i - PORT_IO_BUS : i);
+  let k = (hi ? comp.state.portPokeKnownHi : comp.state.portPokeKnown) ?? 0;
+  let v = (hi ? comp.state.portPokeValHi : comp.state.portPokeVal) ?? 0;
   const isKnown = Math.floor(k / bit) % 2 === 1;
   const isOne = Math.floor(v / bit) % 2 === 1;
   if (!isKnown) k += bit; // floating -> 0
@@ -829,14 +852,28 @@ export function togglePortPin(comp: CircuitComponentInstance, i: number): Circui
     k -= bit; // 1 -> floating
     v -= bit;
   }
-  return { ...comp, state: { ...comp.state, portPokeKnown: k >>> 0, portPokeVal: v >>> 0 } };
+  const st = hi ? { portPokeKnownHi: k >>> 0, portPokeValHi: v >>> 0 } : { portPokeKnown: k >>> 0, portPokeVal: v >>> 0 };
+  return { ...comp, state: { ...comp.state, ...st } };
 }
 
-/** The level the user gave Port I/O pin i: 0, 1 or 'Z' (floating, evolution's unknown) */
+/** The level the user gave Port I/O pin i: 0, 1 or 'Z' (floating, evolution's unknown). Pins 32-63 are in the Hi fields */
 export function portPokeOf(comp: CircuitComponentInstance, i: number): SignalValue {
-  const bit = 2 ** i;
-  if (Math.floor((comp.state.portPokeKnown ?? 0) / bit) % 2 === 0) return 'Z';
-  return Math.floor((comp.state.portPokeVal ?? 0) / bit) % 2 === 1 ? 1 : 0;
+  const hi = i >= PORT_IO_BUS;
+  const bit = 2 ** (hi ? i - PORT_IO_BUS : i);
+  if (Math.floor(((hi ? comp.state.portPokeKnownHi : comp.state.portPokeKnown) ?? 0) / bit) % 2 === 0) return 'Z';
+  return Math.floor(((hi ? comp.state.portPokeValHi : comp.state.portPokeVal) ?? 0) / bit) % 2 === 1 ? 1 : 0;
+}
+
+/** Port I/O state fields for user levels (bit i = pin i; anything but 0 / 1 = floating) */
+export function portPokeState(bits: readonly unknown[]): Pick<CircuitComponentInstance['state'], 'portPokeKnown' | 'portPokeVal' | 'portPokeKnownHi' | 'portPokeValHi'> {
+  const word = (from: number, one: boolean) =>
+    bits.slice(from, from + PORT_IO_BUS).reduce<number>((a, b, i) => a + ((one ? b === 1 : b === 0 || b === 1) ? 2 ** i : 0), 0);
+  return {
+    portPokeKnown: word(0, false),
+    portPokeVal: word(0, true),
+    portPokeKnownHi: word(PORT_IO_BUS, false) || undefined,
+    portPokeValHi: word(PORT_IO_BUS, true) || undefined,
+  };
 }
 
 /**
@@ -852,10 +889,18 @@ export function portIoPins(comp: CircuitComponentInstance): SignalValue[] {
   const byKey = (k: string) => comp.inputs.find((p) => pinKey(comp, p) === k);
   const unk = (v: SignalValue) => v === 'X' || v === 'Z';
   const norm = (v: SignalValue): SignalValue => (unk(v) ? 'Z' : v);
+  // portOpen: bit 0 / 1 = EN / IN wired to nothing, bit 2 / 3 = EN1 / IN1 (the second bus, pins 32-63)
   const open = comp.state.portOpen ?? 0;
-  const data = cfg.portDir === 'input' ? [] : open & 2 ? Array<SignalValue>(n).fill('E') : readBits(byKey('in'), n).map(norm);
+  const w0 = Math.min(n, PORT_IO_BUS);
+  const isOpen = (i: number, flag: number) => (open & (i < PORT_IO_BUS ? flag : flag << 2)) !== 0;
+  const both = (k: string) => [...readBits(byKey(k), w0), ...(n > w0 ? readBits(byKey(`${k}1`), n - w0) : [])];
+  const data = cfg.portDir === 'input' ? [] : both('in').map((v, i) => (isOpen(i, 2) ? 'E' : norm(v)));
   const en: SignalValue[] =
-    open & 1 ? Array<SignalValue>(n).fill('E') : cfg.portDir === 'inoutSingle' ? readBits(byKey('en'), 1) : cfg.portDir === 'inoutMulti' ? readBits(byKey('en'), n) : [];
+    cfg.portDir === 'inoutSingle'
+      ? [open & 1 ? 'E' : readBits(byKey('en'), 1)[0]]
+      : cfg.portDir === 'inoutMulti'
+        ? both('en').map((v, i) => (isOpen(i, 1) ? 'E' : v))
+        : [];
   const out: SignalValue[] = [];
   for (let i = 0; i < n; i++) {
     const poke = portPokeOf(comp, i);
@@ -2724,7 +2769,7 @@ const BUILT_IN_CATALOG: Record<Exclude<ComponentType, PartId>, ComponentMetadata
   dipSwitch: ioMeta('dipSwitch', 'DIP Anahtar', 'Tek pakette 1-32 açma/kapama anahtarı; her anahtarın kendi 1 bitlik çıkışı var, anahtara tıklayınca değişir'),
   joystick: io5Meta('joystick', 'Joystick', 'Fareyle sürüklenen kumanda kolu: X ve Y çıkışları 2-5 bit; kol ortadayken yaklaşık yarı değer, bırakınca ortaya döner'),
   matrixKeypad: io5Meta('matrixKeypad', 'Matris Tuş Takımı', '4x4 tuş takımı: basılı tuş, alttaki satır girişinin değerini sağdaki sütun çıkışına geçirir (ham mod; basılı tuş yokken sütun boşta). PmodKYPD modunda sütunlar 1, basılı tuşun satırı 0 ise 0'),
-  portIo: io5Meta('portIo', 'Port G/Ç', '1-32 bacaklı G/Ç portu: yalnız giriş (bacaklara tıklayarak boşta/0/1), yalnız çıkış (devrenin değerini gösterir) ya da tek / bacak başı etkinleştirmeli giriş-çıkış'),
+  portIo: io5Meta('portIo', 'Port G/Ç', '1-64 bacaklı G/Ç portu (33-64 bacakta bacak 32-63 ikinci bir 32 bitlik veriyolunda): yalnız giriş (bacaklara tıklayarak boşta/0/1), yalnız çıkış (devrenin değerini gösterir) ya da tek / bacak başı etkinleştirmeli giriş-çıkış'),
   binToBcd: bfhMeta('binToBcd', 'İkili → BCD Dönüştürücü', 'İkili sayıyı (4-13 bit) ondalık basamaklarına ayırır: her basamak 4 bitlik BCD çıkışı (1, 10, 100, 1000); giriş tanımsızsa birler basamağı 1111, diğerleri 0'),
   bcdToSevenSegment: bfhMeta('bcdToSevenSegment', 'BCD → 7-Segment Kod Çözücü', '4 bitlik BCD girişi (0-9) 7-segment göstergenin a-g segment sinyallerine (aktif-yüksek) çevirir; 10-15 ya da tanımsız girişte bütün segmentler x'),
   rgbVideo: videoMeta(),
@@ -6516,9 +6561,13 @@ export function simulateCircuitStep(
           const p = pinOf(k);
           return !!p && !isPinConnected(p.id);
         };
-        const open = (isOpen('en') ? 1 : 0) | (isOpen('in') ? 2 : 0);
+        const open = (isOpen('en') ? 1 : 0) | (isOpen('in') ? 2 : 0) | (isOpen('en1') ? 4 : 0) | (isOpen('in1') ? 8 : 0);
         if ((comp.state.portOpen ?? 0) !== open) comp.state = { ...comp.state, portOpen: open || undefined };
-        if (comp.outputs.length) setBitsOut(0, portIoPins(comp));
+        if (comp.outputs.length) {
+          const bits = portIoPins(comp);
+          setBitsOut(0, bits.slice(0, PORT_IO_BUS));
+          if (comp.outputs.length > 1) setBitsOut(1, bits.slice(PORT_IO_BUS));
+        }
         break;
       }
       case 'realTimeClock': {

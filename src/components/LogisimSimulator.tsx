@@ -131,6 +131,7 @@ import {
   setKeypadKey,
   keypadLabels,
   togglePortPin,
+  io5Geometry,
   portIoPins,
   portPokeOf,
   rgbLedBits,
@@ -6654,33 +6655,25 @@ export const LogicCircuitSimulator: React.FC<LogicCircuitSimulatorProps> = ({ de
         const pins = portIoPins(comp);
         const pinColor = (v: SignalValue) => (v === 1 ? '#00d200' : v === 0 ? '#006400' : v === 'E' ? '#c00000' : '#c0c0c0');
         const dir = cfg.portDir;
-        const inout = dir === 'inoutSingle' || dir === 'inoutMulti';
-        const arrows: React.ReactNode[] = [];
-        let px = inout ? 0 : 20;
-        if (inout) {
-          arrows.push(<line key="en" x1={px} y1={20} x2={px + 12} y2={20} stroke={io5Stroke} strokeWidth={6} />);
-          px += 20;
-        }
-        if (dir !== 'input') {
-          // the circuit's value comes in: arrow pointing into the port
-          arrows.push(
-            <g key="in" stroke={io5Stroke} fill="none">
+        // one arrow per bus pin where the pin is: enables on the left side, the circuit's value coming in (pointing
+        // into the port) and the port's value going out along the top (a second bus over 32 pins)
+        const arrows = Object.entries(io5Geometry('portIo', cfg).pins).map(([k, { x: px, y: py }]) =>
+          k.startsWith('en') ? (
+            <line key={k} x1={px} y1={py} x2={px + 12} y2={py} stroke={io5Stroke} strokeWidth={6} />
+          ) : k.startsWith('in') ? (
+            <g key={k} stroke={io5Stroke} fill="none">
               <line x1={px} y1={0} x2={px} y2={8} strokeWidth={6} />
               <line x1={px} y1={30} x2={px} y2={40} strokeWidth={6} />
               <polyline points={`${px},30 ${px - 8},10 ${px + 8},10 ${px},30`} strokeWidth={3} />
             </g>
-          );
-          px += 20;
-        }
-        if (dir !== 'output') {
-          arrows.push(
-            <g key="out" stroke={io5Stroke} fill="none">
+          ) : (
+            <g key={k} stroke={io5Stroke} fill="none">
               <line x1={px} y1={0} x2={px} y2={10} strokeWidth={6} />
               <line x1={px} y1={32} x2={px} y2={40} strokeWidth={6} />
               <polyline points={`${px},12 ${px - 8},32 ${px + 8},32 ${px},12`} strokeWidth={3} />
             </g>
-          );
-        }
+          )
+        );
         return (
           <g>
             <polygon points={`2,40 2,84 10,92 ${W - 12},92 ${W - 4},84 ${W - 4},40`} fill="#404040" stroke={isSelected ? '#3b82f6' : io5Stroke} strokeWidth={isSelected ? 2.5 : 1.5} />
